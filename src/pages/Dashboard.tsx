@@ -42,48 +42,31 @@ export default function Dashboard({ profile }: DashboardProps) {
   }, []);
 
   return (
-    <div className="page-card">
-      <h1 className="page-title">Painel de Controle</h1>
-      <p className="page-description">Acompanhe seus dados, convites e registros de visitas.</p>
-      {profile && (
+    <div>
+      <div className="page-card">
+        <h1 className="page-title">GINFOTOS 6ª CRE</h1>
+        <p className="page-description">Sistema de Visitas Técnicas — E/6ª CRE/GIN</p>
+        {profile && <h2>Bem-vinda, {profile.full_name ?? profile.email ?? 'Usuário'}</h2>}
+      </div>
+
+      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 16 }}>
         <div className="page-card">
-          <h2>Bem-vindo, {profile.full_name ?? profile.email ?? 'Usuário'}</h2>
-          <p>Seu ID: {profile.id}</p>
-          <p>Função: {profile.role ?? 'Não definida'}</p>
+          <h3>Unidades Escolares</h3>
+          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>{stats.unidades}</p>
         </div>
-      )}
-      {loading ? (
-        <p>Carregando métricas...</p>
-      ) : (
         <div className="page-card">
-          <table className="table-list">
-            <thead>
-              <tr>
-                <th>Recurso</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Visitas</td>
-                <td>{stats.visitas}</td>
-              </tr>
-              <tr>
-                <td>Unidades</td>
-                <td>{stats.unidades}</td>
-              </tr>
-              <tr>
-                <td>Pastas</td>
-                <td>{stats.pastas}</td>
-              </tr>
-              <tr>
-                <td>Convites</td>
-                <td>{stats.invites}</td>
-              </tr>
-            </tbody>
-          </table>
+          <h3>Visitas Técnicas</h3>
+          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>{stats.visitas}</p>
         </div>
-      )}
+        <div className="page-card">
+          <h3>Fotos Registradas</h3>
+          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>0</p>
+        </div>
+        <div className="page-card">
+          <h3>Convites Pendentes</h3>
+          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>{stats.invites}</p>
+        </div>
+      </div>
     </div>
   );
 }

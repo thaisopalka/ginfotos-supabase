@@ -76,10 +76,12 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside>
-        <Sidebar isAdmin={isAdmin} email={session?.user.email ?? undefined} />
-        <div className="sidebar-footer">DESENVOLVIDO POR THAÍS OPALKA</div>
-      </aside>
+      {location.pathname !== '/login' && (
+        <aside>
+          <Sidebar isAdmin={isAdmin} email={session?.user.email ?? undefined} />
+          <div className="sidebar-footer">DESENVOLVIDO POR THAÍS OPALKA</div>
+        </aside>
+      )}
       <main>
         {loading ? (
           <div className="page-center">Carregando aplicação…</div>

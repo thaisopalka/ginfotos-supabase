@@ -11,6 +11,7 @@ export default function Unidades() {
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
+  const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -40,8 +41,14 @@ export default function Unidades() {
   return (
     <div>
       <div className="page-card">
-        <h1 className="page-title">Unidades</h1>
+        <h1 className="page-title">UNIDADES ESCOLARES</h1>
         <p className="page-description">Gerencie unidades e locais de visitação.</p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <input placeholder="Buscar unidades" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <button className="primary" type="button" onClick={() => { setName(''); setAddress(''); }}>
+            NOVA UNIDADE
+          </button>
+        </div>
         <form onSubmit={handleSubmit}>
           <div className="field">
             <label htmlFor="name">Nome da Unidade</label>
@@ -51,7 +58,7 @@ export default function Unidades() {
             <label htmlFor="address">Endereço</label>
             <input id="address" value={address} onChange={(event) => setAddress(event.target.value)} />
           </div>
-          <button className="primary" type="submit">Adicionar Unidade</button>
+            <button className="primary" type="submit">NOVA UNIDADE</button>
         </form>
         {message && <p className="notice">{message}</p>}
       </div>
@@ -66,7 +73,7 @@ export default function Unidades() {
             </tr>
           </thead>
           <tbody>
-            {unidades.map((item) => (
+            {unidades.filter(u => u.name.toLowerCase().includes(query.toLowerCase())).map((item) => (
               <tr key={item.id}>
                 <td>{item.name}</td>
                 <td>{item.address || 'Não informado'}</td>

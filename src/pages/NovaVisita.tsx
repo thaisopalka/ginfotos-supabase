@@ -72,7 +72,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     <div>
       <div className="page-card">
         <h1 className="page-title">Nova Visita</h1>
-        <p className="page-description">Registre uma nova visita e faça upload de fotos no bucket designado.</p>
+        <p className="page-description">Registre uma nova visita e anexe fotos da inspeção.</p>
         <form onSubmit={handleSubmit}>
           <div className="field">
             <label htmlFor="visitorName">Nome do visitante</label>
@@ -96,13 +96,45 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
             <label htmlFor="notes">Observações</label>
             <textarea id="notes" value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} />
           </div>
-          <button className="primary" type="submit">Salvar visita</button>
+          <button className="primary" type="submit">SALVAR VISITA</button>
         </form>
         {message && <p className="notice">{message}</p>}
       </div>
 
       {visit && (
-        <PhotoUpload visitId={visit.id} onUpload={() => setMessage('Upload concluído com sucesso.')} />
+        <div style={{ marginTop: 16 }}>
+          <div className="page-card">
+            <h3 className="page-title">Fotos e Anexos</h3>
+            <p className="page-description">Envie fotos para a visita criada ou tire uma foto agora com a câmera do dispositivo.</p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button className="primary" type="button" onClick={() => document.getElementById('capture-input')?.click()}>
+                TIRAR FOTO AGORA
+              </button>
+              <button className="secondary" type="button" onClick={() => document.getElementById('file-input')?.click()}>
+                ANEXAR FOTOS
+              </button>
+            </div>
+            <input id="capture-input" type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const filePath = `${visit.id}/${Date.now()}-${file.name}`;
+              const { error } = await supabase.storage.from('visita-fotos').upload(filePath, file, { cacheControl: '3600', upsert: true });
+              if (error) setMessage(`Falha ao enviar foto: ${error.message}`);
+              else setMessage('Upload concluído com sucesso.');
+            }} />
+
+            <input id="file-input" type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={async (e) => {
+              const files = Array.from(e.target.files || []);
+              if (files.length === 0) return;
+              for (const file of files) {
+                const filePath = `${visit.id}/${Date.now()}-${file.name}`;
+                const { error } = await supabase.storage.from('visita-fotos').upload(filePath, file, { cacheControl: '3600', upsert: true });
+                if (error) setMessage(`Falha ao enviar foto: ${error.message}`);
+              }
+              setMessage('Upload concluído com sucesso.');
+            }} />
+          </div>
+        </div>
       )}
     </div>
   );

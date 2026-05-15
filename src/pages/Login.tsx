@@ -28,11 +28,13 @@ export default function Login() {
   };
 
   return (
-    <div className="page-card">
-      <h1 className="page-title">Acesso por Magic Link</h1>
-      <p className="page-description">Use seu e-mail para receber um link mágico e entrar em seguida.</p>
-      <form onSubmit={handleSubmit}>
-        <div className="field">
+    <div className="login-page">
+      <div className="login-card">
+        <h1>GINFOTOS 6ª CRE</h1>
+        <h3 className="login-sub">Sistema de Visitas Técnicas — E/6ª CRE/GIN</h3>
+        <p className="login-desc">Acesso restrito a usuários autorizados</p>
+
+        <form onSubmit={handleSubmit} className="login-form">
           <label htmlFor="email">E-mail</label>
           <input
             id="email"
@@ -42,12 +44,16 @@ export default function Login() {
             placeholder="seu@email.com"
             required
           />
-        </div>
-        <button className="primary" type="submit" disabled={submitting}>
-          {submitting ? 'Enviando...' : 'Enviar link mágico'}
-        </button>
-      </form>
-      {message && <p className="notice">{message}</p>}
+
+          <button className="primary large" type="submit" disabled={submitting}>
+            {submitting ? 'Enviando...' : 'ENVIAR LINK MÁGICO'}
+          </button>
+        </form>
+
+        {message && <p className="notice">{message}</p>}
+      </div>
+
+      <div className="login-footer">DESENVOLVIDO POR THAÍS OPALKA</div>
     </div>
   );
 }
