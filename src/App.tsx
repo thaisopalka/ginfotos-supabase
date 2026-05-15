@@ -27,7 +27,7 @@ function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const location = useLocation();
-  const isLoginPage = location.pathname === '/login';
+  const isLoginRoute = location.pathname === '/login';
 
   useEffect(() => {
     let mounted = true;
@@ -76,14 +76,14 @@ function App() {
   const isAdmin = session?.user.email ? adminEmails.includes(session.user.email) : false;
 
   return (
-    <div className={isLoginPage ? 'public-shell' : 'app-shell'}>
-      {!isLoginPage && (
+    <div className={isLoginRoute ? 'public-shell' : 'app-shell'}>
+      {!isLoginRoute && (
         <aside>
           <Sidebar isAdmin={isAdmin} email={session?.user.email ?? undefined} />
           <div className="sidebar-footer">DESENVOLVIDO POR THAÍS OPALKA</div>
         </aside>
       )}
-      <main className={isLoginPage ? 'login-main' : undefined}>
+      <main className={isLoginRoute ? 'login-main' : undefined}>
         {loading ? (
           <div className="page-center">Carregando aplicação…</div>
         ) : (

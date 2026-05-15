@@ -114,6 +114,29 @@ main {
   text-align: left;
 }
 
+.login-mode-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.mode-button {
+  min-height: 52px;
+  border-radius: 14px;
+  border: 1px solid #d1d5db;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mode-button.active {
+  background: #0b4f79;
+  color: #ffffff;
+  border-color: #0b4f79;
+}
+
 .login-form input {
   width: 100%;
   min-height: 54px;
