@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from './lib/supabaseClient';
 import { ProtectedRoute } from './routes/ProtectedRoute';
@@ -27,6 +27,7 @@ function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const location = useLocation();
+  const isLoginPage = location.pathname === '/login';
 
   useEffect(() => {
     let mounted = true;
@@ -75,14 +76,14 @@ function App() {
   const isAdmin = session?.user.email ? adminEmails.includes(session.user.email) : false;
 
   return (
-    <div className="app-shell">
-      {location.pathname !== '/login' && (
+    <div className={isLoginPage ? 'public-shell' : 'app-shell'}>
+      {!isLoginPage && (
         <aside>
           <Sidebar isAdmin={isAdmin} email={session?.user.email ?? undefined} />
           <div className="sidebar-footer">DESENVOLVIDO POR THAÍS OPALKA</div>
         </aside>
       )}
-      <main>
+      <main className={isLoginPage ? 'login-main' : undefined}>
         {loading ? (
           <div className="page-center">Carregando aplicação…</div>
         ) : (
