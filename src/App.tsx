@@ -74,6 +74,7 @@ function App() {
   }, [session]);
 
   const isAdmin = session?.user.email ? adminEmails.includes(session.user.email) : false;
+  const isLoginPage = location.pathname === '/login';
 
   return (
     <div className={isLoginPage ? 'public-shell' : 'app-shell'}>

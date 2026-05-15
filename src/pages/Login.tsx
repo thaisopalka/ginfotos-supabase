@@ -8,11 +8,18 @@ export default function Login() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail.includes('@') || !trimmedEmail.includes('.')) {
+      setMessage('Digite um e-mail completo. Exemplo: thaisopalka@gmail.com');
+      return;
+    }
+
     setSubmitting(true);
     setMessage('Enviando link mágico...');
 
     const { error } = await supabase.auth.signInWithOtp({
-      email,
+      email: trimmedEmail,
       options: {
         emailRedirectTo: window.location.origin
       }
@@ -41,9 +48,10 @@ export default function Login() {
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="seu@email.com"
+            placeholder="thaisopalka@gmail.com"
             required
           />
+          <p className="login-hint">Digite seu e-mail completo para receber o link mágico.</p>
 
           <button className="primary large" type="submit" disabled={submitting}>
             {submitting ? 'Enviando...' : 'ENVIAR LINK MÁGICO'}

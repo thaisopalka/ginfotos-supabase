@@ -51,6 +51,121 @@ main {
   padding: 28px;
 }
 
+.public-shell {
+  min-height: 100vh;
+  display: block;
+  background: linear-gradient(135deg, #eef6fb 0%, #f8fbff 48%, #e6f0f7 100%);
+}
+
+.login-main {
+  min-height: 100vh;
+  padding: 0;
+}
+
+.login-page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(94vw, 520px);
+  max-width: 520px;
+  background: #ffffff;
+  border-radius: 24px;
+  padding: clamp(28px, 5vw, 44px);
+  box-shadow: 0 18px 45px rgba(15,23,42,0.12);
+  text-align: center;
+  border: 1px solid #e6eef7;
+}
+
+.login-card h1 {
+  margin: 0 0 10px;
+  color: #0b4f79;
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: 0.08em;
+  line-height: 1.05;
+}
+
+.login-sub {
+  margin: 0 auto 12px;
+  color: #4b5b6b;
+  font-weight: 700;
+  font-size: clamp(1rem, 2.8vw, 1.25rem);
+  line-height: 1.4;
+  max-width: 380px;
+}
+
+.login-desc {
+  margin: 0 auto 24px;
+  color: #6b7280;
+  line-height: 1.45;
+  max-width: 340px;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+  text-align: left;
+}
+
+.login-form input {
+  width: 100%;
+  min-height: 54px;
+  font-size: 1rem;
+  padding: 14px 16px;
+  border-radius: 12px;
+}
+
+.login-form button {
+  width: 100%;
+  margin-left: 0;
+  min-height: 56px;
+  font-size: 1rem;
+}
+
+.login-footer {
+  color: #6b7280;
+  font-size: 0.9rem;
+  text-align: center;
+  letter-spacing: 0.03em;
+}
+
+.login-hint {
+  margin: 0;
+  color: #6b7280;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 480px) {
+  .login-page {
+    padding: 16px;
+    justify-content: flex-start;
+    padding-top: 52px;
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 26px 18px;
+    border-radius: 18px;
+  }
+
+  .login-card h1 {
+    font-size: 2rem;
+    letter-spacing: 0.05em;
+  }
+
+  .login-form input {
+    font-size: 0.95rem;
+  }
+}
+
 .page-card {
   background: var(--surface);
   border: 1px solid #e6eef7;
