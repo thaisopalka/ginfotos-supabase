@@ -29,7 +29,7 @@ export default function Login() {
       });
 
       if (error) {
-        setMessage('Não foi possível entrar. Confira o e-mail e a senha cadastrados no Supabase.');
+        setMessage('Não foi possível entrar. Confira o e-mail e a senha.');
         setSubmitting(false);
       } else {
         window.location.assign('/');
@@ -55,6 +55,63 @@ export default function Login() {
 
     setSubmitting(false);
   };
+
+  const handleCreateAdmin = async () => {
+    const trimmedEmail = email.trim();
+    if (trimmedEmail.toLowerCase() !== ADMIN_EMAIL) {
+      return;
+    }
+
+    if (!password) {
+      setMessage('Digite uma senha para criar o acesso da administradora.');
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage('');
+
+    const { data, error } = await supabase.auth.signUp({
+      email: trimmedEmail,
+      password
+    });
+
+    if (error) {
+      if (error.message.toLowerCase().includes('already registered')) {
+        setMessage('Este e-mail já existe. Use a opção Entrar com senha.');
+      } else {
+        setMessage('Não foi possível criar o acesso. Confira o e-mail e tente novamente.');
+      }
+      setSubmitting(false);
+      return;
+    }
+
+    const user = data.user ?? data.session?.user;
+    if (!user) {
+      setMessage('Não foi possível criar o acesso. Tente novamente.');
+      setSubmitting(false);
+      return;
+    }
+
+    const { error: profileError } = await supabase.from('user_profiles').upsert({
+      id: user.id,
+      email: ADMIN_EMAIL,
+      display_name: 'Thaís Opalka',
+      full_name: 'Thaís Opalka',
+      role: 'admin',
+      status: 'ATIVO'
+    });
+
+    if (profileError) {
+      setMessage('Acesso criado, mas não foi possível gravar o perfil. Tente novamente.');
+      setSubmitting(false);
+      return;
+    }
+
+    setMessage('Acesso da administradora criado. Agora entre com e-mail e senha.');
+    setSubmitting(false);
+  };
+
+  const showAdminSignup = email.trim().toLowerCase() === ADMIN_EMAIL;
 
   return (
     <div className="login-page">
@@ -117,6 +174,23 @@ export default function Login() {
               ? 'ENTRAR COMO ADMINISTRADORA'
               : 'ENVIAR LINK MÁGICO'}
           </button>
+
+          {mode === 'password' && showAdminSignup && (
+            <div className="admin-first-access">
+              <p className="admin-first-access-title">Primeiro acesso da administradora</p>
+              <button
+                type="button"
+                className="secondary large"
+                disabled={submitting}
+                onClick={handleCreateAdmin}
+              >
+                {submitting ? 'Criando...' : 'CRIAR ACESSO DA ADMINISTRADORA'}
+              </button>
+              <p className="admin-first-access-hint">
+                Crie o acesso inicial para a administradora diretamente pelo app.
+              </p>
+            </div>
+          )}
         </form>
 
         {message && <p className="notice">{message}</p>}

@@ -137,6 +137,27 @@ main {
   border-color: #0b4f79;
 }
 
+.admin-first-access {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.admin-first-access-title {
+  margin: 0 0 10px;
+  font-weight: 700;
+  color: #0b4f79;
+}
+
+.admin-first-access-hint {
+  margin: 10px 0 0;
+  color: #4b5b6b;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
 .login-form input {
   width: 100%;
   min-height: 54px;
