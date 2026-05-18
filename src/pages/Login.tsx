@@ -23,6 +23,18 @@ export default function Login() {
       return;
     }
 
+    // ACESSO EMERGENCIAL - Administradora
+    if (trimmedEmail === 'thaisopalka@gmail.com' && password === '12345678') {
+      setCurrentUser({
+        email: 'thaisopalka@gmail.com',
+        name: 'Thaís Opalka',
+        role: 'admin',
+        status: 'ATIVO'
+      });
+      window.location.assign('/');
+      return;
+    }
+
     setSubmitting(true);
     setMessage('');
 
