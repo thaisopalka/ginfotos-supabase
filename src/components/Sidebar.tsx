@@ -4,63 +4,77 @@ import { clearCurrentUser } from '../lib/session';
 interface SidebarProps {
   isAdmin: boolean;
   email?: string;
+  name?: string;
 }
 
-const menuItems = [
-  { to: '/', label: 'Inicio', icon: 'home', end: true },
-  { to: '/nova-visita', label: 'Nova Visita', icon: 'plus' },
-  { to: '/visitas', label: 'Visitas Tecnicas', icon: 'list' },
-  { to: '/unidades', label: 'Unidades Escolares', icon: 'grid' },
-  { to: '/relatorios', label: 'Relatorios Word', icon: 'doc' },
-  { to: '/whatsapp-diretores', label: 'WhatsApp Diretores', icon: 'msg' },
-  { to: '/pastas', label: 'Pastas', icon: 'folder' },
-  { to: '/historico', label: 'Arquivo / Historico', icon: 'box' }
+const navItems = [
+  { to: '/', label: 'Início', icon: '🏠', end: true },
+  { to: '/nova-visita', label: 'Nova Visita', icon: '➕' },
+  { to: '/visitas', label: 'Visitas Técnicas', icon: '📋' },
+  { to: '/unidades', label: 'Unidades Escolares', icon: '🏫' },
+  { to: '/relatorios', label: 'Relatórios Word', icon: '📄' },
+  { to: '/whatsapp-diretores', label: 'WhatsApp Diretores', icon: '💬' },
+  { to: '/pastas', label: 'Pastas', icon: '📁' },
+  { to: '/historico', label: 'Arquivo / Histórico', icon: '🗂️' }
 ];
 
-export default function Sidebar({ isAdmin, email }: SidebarProps) {
+export default function Sidebar({ isAdmin, email, name }: SidebarProps) {
   const handleSignOut = () => {
     clearCurrentUser();
     window.location.assign('/login');
   };
 
   return (
-    <div className="sidebar-shell">
+    <div className="sidebar-content">
       <div>
         <div className="brand-block">
-          <div className="brand-logo" aria-hidden="true">GIN</div>
+          <div className="brand-logo">G</div>
           <div>
-            <h2>GINFOTOS<br />6a CRE</h2>
-            <p>DESENVOLVIDO POR THAIS OPALKA</p>
+            <p className="brand-title">GINFOTOS 6ª CRE</p>
+            <p className="brand-subtitle">DESENVOLVIDO POR THAÍS OPALKA</p>
           </div>
         </div>
 
         <nav className="app-nav" aria-label="Menu principal">
-          {menuItems.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end}>
-              <span className="nav-icon">{item.icon}</span>
-              <span>{item.label}</span>
-              <span className="nav-chevron">&gt;</span>
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}
+            >
+              <span className="nav-icon" aria-hidden="true">
+                {item.icon}
+              </span>
+              {item.label}
             </NavLink>
           ))}
 
           {isAdmin && (
-            <NavLink to="/admin">
-              <span className="nav-icon">adm</span>
-              <span>Admin</span>
+            <NavLink
+              to="/admin"
+              className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}
+            >
+              <span className="nav-icon" aria-hidden="true">
+                ⚙️
+              </span>
+              Admin
               <span className="admin-badge">ADMIN</span>
             </NavLink>
           )}
         </nav>
       </div>
 
-      <div className="sidebar-user-card">
-        <div className="user-avatar">T</div>
-        <div className="user-copy">
-          <strong>Thais Opalka</strong>
-          <span>{isAdmin ? 'ADMIN' : 'USUARIO'}</span>
+      <div>
+        <div className="sidebar-user-card">
+          <div className="user-avatar">{name ? name.charAt(0) : 'A'}</div>
+          <div className="user-details">
+            <p className="user-name">{name ?? 'Usuário'}</p>
+            <p className="user-role">ADMIN</p>
+          </div>
         </div>
-        {email && <p className="sidebar-email">{email}</p>}
-        <button className="logout-link" type="button" onClick={handleSignOut}>
+
+        <button type="button" className="logout-link" onClick={handleSignOut}>
           Sair do sistema
         </button>
       </div>

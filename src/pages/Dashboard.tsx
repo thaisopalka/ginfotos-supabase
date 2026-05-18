@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { UserProfile } from '../App';
 
@@ -16,6 +17,7 @@ interface DashboardProps {
 export default function Dashboard({ profile }: DashboardProps) {
   const [stats, setStats] = useState<Stats>({ visitas: 0, unidades: 0, pastas: 0, invites: 0 });
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     async function loadStats() {
@@ -34,39 +36,126 @@ export default function Dashboard({ profile }: DashboardProps) {
         })
       );
 
-      setStats({ visitas: result.visitas ?? 0, unidades: result.unidades ?? 0, pastas: result.pastas ?? 0, invites: result.invites ?? 0 });
+      setStats({
+        visitas: result.visitas ?? 0,
+        unidades: result.unidades ?? 0,
+        pastas: result.pastas ?? 0,
+        invites: result.invites ?? 0
+      });
       setLoading(false);
     }
 
     loadStats();
   }, []);
 
+  const userName = profile?.full_name ?? profile?.name ?? profile?.email ?? 'Usuário';
+
   return (
-    <div>
-      <div className="page-card">
-        <h1 className="page-title">GINFOTOS 6ª CRE</h1>
-        <p className="page-description">Sistema de Visitas Técnicas — E/6ª CRE/GIN</p>
-        {profile && <h2>Bem-vinda, {profile.full_name ?? profile.email ?? 'Usuário'}</h2>}
+    <div className="dashboard-page">
+      <div className="top-row">
+        <div>
+          <p className="page-label">Página</p>
+          <h1>Início</h1>
+        </div>
+        <div className="top-actions">
+          <span className="status-pill online">Online</span>
+          <button type="button" className="status-pill sync-button">
+            Sincronizar
+          </button>
+        </div>
       </div>
 
-      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 16 }}>
-        <div className="page-card">
-          <h3>Unidades Escolares</h3>
-          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>{stats.unidades}</p>
+      <section className="hero-panel">
+        <div>
+          <p className="hero-eyebrow">Bem-vindo(a) ao sistema</p>
+          <h2>{userName}</h2>
+          <p className="hero-meta">ADMIN - E/6ª CRE/GIN</p>
         </div>
-        <div className="page-card">
-          <h3>Visitas Técnicas</h3>
-          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>{stats.visitas}</p>
+        <div className="hero-actions">
+          <button type="button" className="hero-button primary" onClick={() => navigate('/nova-visita')}>
+            + NOVA VISITA
+          </button>
+          <button type="button" className="hero-button secondary">
+            SINCRONIZAR
+          </button>
         </div>
-        <div className="page-card">
-          <h3>Fotos Registradas</h3>
-          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>0</p>
-        </div>
-        <div className="page-card">
-          <h3>Convites Pendentes</h3>
-          <p style={{ fontSize: '1.6rem', margin: '8px 0' }}>{stats.invites}</p>
-        </div>
+      </section>
+
+      <div className="stats-grid">
+        <article className="stat-card">
+          <div className="stat-icon" aria-hidden="true">
+            🏫
+          </div>
+          <div>
+            <p className="stat-value">{loading ? '—' : stats.unidades}</p>
+            <p className="stat-label">Unidades</p>
+          </div>
+        </article>
+        <article className="stat-card">
+          <div className="stat-icon" aria-hidden="true">
+            📋
+          </div>
+          <div>
+            <p className="stat-value">{loading ? '—' : stats.visitas}</p>
+            <p className="stat-label">Visitas</p>
+          </div>
+        </article>
+        <article className="stat-card">
+          <div className="stat-icon" aria-hidden="true">
+            📝
+          </div>
+          <div>
+            <p className="stat-value">0</p>
+            <p className="stat-label">Rascunhos</p>
+          </div>
+        </article>
+        <article className="stat-card">
+          <div className="stat-icon" aria-hidden="true">
+            ⏳
+          </div>
+          <div>
+            <p className="stat-value">0</p>
+            <p className="stat-label">Pendentes</p>
+          </div>
+        </article>
+        <article className="stat-card">
+          <div className="stat-icon" aria-hidden="true">
+            📄
+          </div>
+          <div>
+            <p className="stat-value">0</p>
+            <p className="stat-label">Relatórios</p>
+          </div>
+        </article>
+        <article className="stat-card">
+          <div className="stat-icon" aria-hidden="true">
+            📷
+          </div>
+          <div>
+            <p className="stat-value">0</p>
+            <p className="stat-label">Sem Legenda</p>
+          </div>
+        </article>
       </div>
+
+      <section className="recent-card">
+        <div className="recent-header">
+          <div>
+            <p className="page-label">Visitas Recentes</p>
+            <h2>Visitas Recentes</h2>
+          </div>
+          <button type="button" className="empty-link" onClick={() => navigate('/visitas')}>
+            Ver todas →
+          </button>
+        </div>
+
+        <div className="empty-state">
+          <p>Nenhuma visita registrada ainda.</p>
+          <button type="button" className="empty-button" onClick={() => navigate('/nova-visita')}>
+            Nova Visita
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
