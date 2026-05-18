@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import { clearCurrentUser } from '../lib/session';
 
 interface SidebarProps {
   isAdmin: boolean;
@@ -7,9 +7,9 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ isAdmin, email }: SidebarProps) {
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    window.location.href = '/login';
+  const handleSignOut = () => {
+    clearCurrentUser();
+    window.location.assign('/login');
   };
 
   return (

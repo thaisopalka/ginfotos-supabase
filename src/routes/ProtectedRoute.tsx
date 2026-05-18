@@ -1,38 +1,33 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Session } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabaseClient';
+import { getCurrentUser, AppUser } from '../lib/session';
 
 interface ProtectedRouteProps {
   children: ReactNode;
   adminOnly?: boolean;
 }
 
-const adminEmails = ['thaisopalka@gmail.com'];
-
 export function ProtectedRoute({ children, adminOnly = false }: ProtectedRouteProps) {
-  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [user, setUser] = useState<AppUser | null | undefined>(undefined);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => {
-      listener.subscription.unsubscribe();
-    };
+    const currentUser = getCurrentUser();
+    setUser(currentUser);
   }, []);
 
-  if (session === undefined) {
+  if (user === undefined) {
     return <div className="page-center">Verificando sessão…</div>;
   }
 
-  if (!session) {
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  if (adminOnly && !adminEmails.includes(session.user.email ?? '')) {
+  if (user.status !== 'ATIVO') {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (adminOnly && user.role !== 'admin') {
     return <Navigate to="/not-found" replace />;
   }
 
