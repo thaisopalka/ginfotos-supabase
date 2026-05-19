@@ -1,0 +1,226 @@
+/* Ajustes visuais complementares do GINFOTOS 6a CRE */
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field label,
+.page-card label {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  padding: 13px 14px;
+  background: #ffffff;
+  color: #0f172a;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #315fc9;
+  box-shadow: 0 0 0 3px rgba(49, 95, 201, 0.12);
+}
+
+textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.table-list {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 820px;
+  background: #ffffff;
+  border: 1px solid #dce3ec;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.table-list th,
+.table-list td {
+  padding: 13px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  border-right: 1px solid #edf2f7;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.94rem;
+}
+
+.table-list th {
+  background: #e8f0fa;
+  color: #10243f;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.table-list tr:last-child td {
+  border-bottom: 0;
+}
+
+.table-list th:last-child,
+.table-list td:last-child {
+  border-right: 0;
+}
+
+.table-list tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.table-list tbody tr:hover {
+  background: #eef4ff;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #e8f0fa;
+  color: #10243f;
+  font-weight: 800;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button.primary,
+.empty-button,
+.status-pill,
+.hero-button,
+.sidebar-link,
+.logout-link {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+button.primary:hover:not(:disabled),
+.empty-button:hover:not(:disabled),
+.hero-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+}
+
+button.empty-link,
+.empty-link {
+  border: 0;
+  background: transparent;
+  color: #315fc9;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+button.empty-link:hover,
+.empty-link:hover {
+  background: rgba(49, 95, 201, 0.1);
+}
+
+.page-card + .page-card,
+.page-card + .empty-state,
+.empty-state + .page-card {
+  margin-top: 18px;
+}
+
+.page-card h2 {
+  color: #10243f;
+}
+
+.stats-grid .page-card,
+.stats-grid .stat-card {
+  height: 100%;
+}
+
+.stat-card {
+  border: 1px solid #dce3ec;
+}
+
+.notice {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  padding: 12px 14px;
+  border-radius: 14px;
+  line-height: 1.5;
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-shell {
+    position: static;
+  }
+
+  .app-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sidebar-user-card {
+    margin-top: 18px;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-main {
+    padding: 18px 14px;
+  }
+
+  .page-card {
+    padding: 18px;
+    border-radius: 16px;
+  }
+
+  .page-title,
+  .top-row h1 {
+    font-size: 1.45rem;
+  }
+
+  .hero-panel {
+    padding: 24px 20px;
+  }
+
+  .hero-panel h2 {
+    font-size: 1.65rem;
+    word-break: break-word;
+  }
+
+  .app-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-link {
+    padding: 12px 14px;
+  }
+
+  .table-list {
+    min-width: 760px;
+  }
+
+  .table-list th,
+  .table-list td {
+    padding: 11px 10px;
+    font-size: 0.88rem;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
