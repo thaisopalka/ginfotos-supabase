@@ -43,6 +43,14 @@ interface LocalUnidade {
   unidade?: string | null;
 }
 
+interface RemoteVisitRecord {
+  id: string;
+  unidade_id?: string | null;
+  visit_date?: string | null;
+  visitor_name?: string | null;
+  notes?: string | null;
+}
+
 interface RecentVisit {
   id: string;
   data: string;
@@ -119,7 +127,7 @@ function localVisitToRecent(visit: LocalVisitRecord): RecentVisit {
   };
 }
 
-function remoteVisitToRecent(item: { id: string; unidade_id?: string | null; visit_date?: string | null; visitor_name?: string | null; notes?: string | null }): RecentVisit {
+function remoteVisitToRecent(item: RemoteVisitRecord): RecentVisit {
   return {
     id: item.id,
     data: item.visit_date || '',
@@ -168,7 +176,7 @@ export default function Dashboard({ profile }: DashboardProps) {
       invites = typeof invitesCount.count === 'number' ? invitesCount.count : 0;
 
       if (!visitasRecentes.error && visitasRecentes.data) {
-        remoteRecent = visitasRecentes.data.map((item) => remoteVisitToRecent(item));
+        remoteRecent = (visitasRecentes.data as RemoteVisitRecord[]).map((item: RemoteVisitRecord) => remoteVisitToRecent(item));
       }
 
       if (visitasCount.error || unidadesCount.error) {
