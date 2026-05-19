@@ -18,7 +18,6 @@ import {
   VerticalAlign,
   WidthType
 } from 'docx';
-import { LOGO_PREFEITURA_RIO } from '../assets/logoPrefeituraRio';
 
 export interface WordReportPhoto {
   name: string;
@@ -45,10 +44,8 @@ const LIGHT_BLUE = 'E8F0FA';
 const BORDER = '111827';
 const SOFT_BORDER = '8EA8C7';
 const FONT = 'Calibri';
-const PHOTO_FRAME_WIDTH = 1280;
-const PHOTO_FRAME_HEIGHT = 890;
-const PHOTO_WORD_WIDTH = 345;
-const PHOTO_WORD_HEIGHT = 240;
+const PHOTO_WIDTH = 325;
+const PHOTO_HEIGHT = 225;
 
 function clean(value?: string | null) {
   return value && value.trim() ? value.trim() : 'Não informado';
@@ -76,6 +73,13 @@ function dataUrlToUint8Array(dataUrl: string) {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function getImageType(dataUrl: string): 'jpg' | 'png' | 'gif' | 'bmp' {
+  if (dataUrl.includes('image/png')) return 'png';
+  if (dataUrl.includes('image/gif')) return 'gif';
+  if (dataUrl.includes('image/bmp')) return 'bmp';
+  return 'jpg';
 }
 
 function text(value: string, options: { bold?: boolean; size?: number; color?: string } = {}) {
@@ -113,47 +117,85 @@ function paragraph(value: string) {
 }
 
 function infoRow(label: string, value: string) {
-  return new TableRow({ children: [
-    new TableCell({ width: { size: 31, type: WidthType.PERCENTAGE }, shading: { type: ShadingType.CLEAR, fill: LIGHT_BLUE }, margins: { top: 125, bottom: 125, left: 135, right: 135 }, children: [new Paragraph({ children: [text(label, { bold: true, size: 22, color: '10243F' })] })] }),
-    new TableCell({ width: { size: 69, type: WidthType.PERCENTAGE }, margins: { top: 125, bottom: 125, left: 155, right: 155 }, children: [new Paragraph({ children: [text(fixText(value), { size: 22 })] })] })
-  ] });
+  return new TableRow({
+    children: [
+      new TableCell({
+        width: { size: 31, type: WidthType.PERCENTAGE },
+        shading: { type: ShadingType.CLEAR, fill: LIGHT_BLUE },
+        margins: { top: 125, bottom: 125, left: 135, right: 135 },
+        children: [new Paragraph({ children: [text(label, { bold: true, size: 22, color: '10243F' })] })]
+      }),
+      new TableCell({
+        width: { size: 69, type: WidthType.PERCENTAGE },
+        margins: { top: 125, bottom: 125, left: 155, right: 155 },
+        children: [new Paragraph({ children: [text(fixText(value), { size: 22 })] })]
+      })
+    ]
+  });
 }
 
 function logoCellParagraph() {
-  if (!LOGO_PREFEITURA_RIO) {
-    return new Paragraph({ alignment: AlignmentType.LEFT, children: [text('PREFEITURA RIO | Educação', { bold: true, size: 20, color: BLUE })] });
-  }
-
   return new Paragraph({
     alignment: AlignmentType.LEFT,
-    children: [new ImageRun({
-      data: dataUrlToUint8Array(LOGO_PREFEITURA_RIO),
-      transformation: { width: 190, height: 60 },
-      type: 'png'
-    })]
+    children: [
+      text('P R E F E I T U R A', { bold: true, size: 14, color: 'FFFFFF' }),
+      new TextRun({ text: '\nRIO', font: FONT, bold: true, size: 34, color: 'FFFFFF', break: 1 }),
+      text('   Educação', { size: 18, color: 'FFFFFF' })
+    ]
   });
 }
 
 function pageHeader() {
-  return new Header({ children: [
-    new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: noBorders, rows: [
-      new TableRow({ children: [
-        new TableCell({ width: { size: 34, type: WidthType.PERCENTAGE }, verticalAlign: VerticalAlign.CENTER, margins: { top: 55, bottom: 55, left: 70, right: 120 }, children: [logoCellParagraph()] }),
-        new TableCell({ width: { size: 66, type: WidthType.PERCENTAGE }, verticalAlign: VerticalAlign.CENTER, margins: { top: 55, bottom: 55, left: 140, right: 70 }, children: [
-          new Paragraph({ alignment: AlignmentType.CENTER, children: [text('SECRETARIA MUNICIPAL DE EDUCAÇÃO', { bold: true, size: 20, color: '111827' })] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, children: [text('6ª COORDENADORIA REGIONAL DE EDUCAÇÃO', { bold: true, size: 20, color: '111827' })] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, children: [text('E/6ª CRE/GIN', { bold: true, size: 20, color: '111827' })] })
-        ] })
-      ] })
-    ] })
-  ] });
+  return new Header({
+    children: [
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        borders: noBorders,
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                width: { size: 36, type: WidthType.PERCENTAGE },
+                shading: { type: ShadingType.CLEAR, fill: BLUE },
+                verticalAlign: VerticalAlign.CENTER,
+                margins: { top: 85, bottom: 85, left: 150, right: 120 },
+                children: [logoCellParagraph()]
+              }),
+              new TableCell({
+                width: { size: 64, type: WidthType.PERCENTAGE },
+                verticalAlign: VerticalAlign.CENTER,
+                margins: { top: 55, bottom: 55, left: 140, right: 70 },
+                children: [
+                  new Paragraph({ alignment: AlignmentType.CENTER, children: [text('SECRETARIA MUNICIPAL DE EDUCAÇÃO', { bold: true, size: 20 })] }),
+                  new Paragraph({ alignment: AlignmentType.CENTER, children: [text('6ª COORDENADORIA REGIONAL DE EDUCAÇÃO', { bold: true, size: 20 })] }),
+                  new Paragraph({ alignment: AlignmentType.CENTER, children: [text('E/6ª CRE/GIN', { bold: true, size: 20 })] })
+                ]
+              })
+            ]
+          })
+        ]
+      })
+    ]
+  });
 }
 
 function pageFooter() {
-  return new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Página ', { size: 18, color: '64748B' }), new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 18, color: '64748B' }), text(' de ', { size: 18, color: '64748B' }), new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: 18, color: '64748B' })] })] });
+  return new Footer({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          text('Página ', { size: 18, color: '64748B' }),
+          new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 18, color: '64748B' }),
+          text(' de ', { size: 18, color: '64748B' }),
+          new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: 18, color: '64748B' })
+        ]
+      })
+    ]
+  });
 }
 
-async function makeStandardPhotoDataUrl(dataUrl: string) {
+async function standardizePhotoDataUrl(dataUrl: string) {
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
@@ -162,21 +204,20 @@ async function makeStandardPhotoDataUrl(dataUrl: string) {
   });
 
   const canvas = document.createElement('canvas');
-  canvas.width = PHOTO_FRAME_WIDTH;
-  canvas.height = PHOTO_FRAME_HEIGHT;
+  canvas.width = 1200;
+  canvas.height = 830;
   const context = canvas.getContext('2d');
   if (!context) return dataUrl;
 
   context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, PHOTO_FRAME_WIDTH, PHOTO_FRAME_HEIGHT);
-
-  const scale = Math.min(PHOTO_FRAME_WIDTH / image.width, PHOTO_FRAME_HEIGHT / image.height);
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
   const width = Math.round(image.width * scale);
   const height = Math.round(image.height * scale);
-  const x = Math.round((PHOTO_FRAME_WIDTH - width) / 2);
-  const y = Math.round((PHOTO_FRAME_HEIGHT - height) / 2);
+  const x = Math.round((canvas.width - width) / 2);
+  const y = Math.round((canvas.height - height) / 2);
   context.drawImage(image, x, y, width, height);
-  return canvas.toDataURL('image/jpeg', 0.9);
+  return canvas.toDataURL('image/jpeg', 0.86);
 }
 
 async function photoCell(photo?: WordReportPhoto) {
@@ -184,10 +225,14 @@ async function photoCell(photo?: WordReportPhoto) {
 
   if (photo?.dataUrl) {
     try {
-      const standardized = await makeStandardPhotoDataUrl(photo.dataUrl);
+      const standardized = await standardizePhotoDataUrl(photo.dataUrl);
       children.push(new Paragraph({
         alignment: AlignmentType.CENTER,
-        children: [new ImageRun({ data: dataUrlToUint8Array(standardized), transformation: { width: PHOTO_WORD_WIDTH, height: PHOTO_WORD_HEIGHT }, type: 'jpg' })]
+        children: [new ImageRun({
+          data: dataUrlToUint8Array(standardized),
+          transformation: { width: PHOTO_WIDTH, height: PHOTO_HEIGHT },
+          type: getImageType(standardized)
+        })]
       }));
     } catch {
       children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não carregada', { color: '64748B' })] }));
@@ -196,7 +241,11 @@ async function photoCell(photo?: WordReportPhoto) {
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não incorporada', { color: '64748B' })] }));
   }
 
-  children.push(new Paragraph({ spacing: { before: 55 }, alignment: AlignmentType.LEFT, children: [text(clean(photo?.caption || 'Sem legenda.'), { bold: true, size: 20 })] }));
+  children.push(new Paragraph({
+    spacing: { before: 50 },
+    alignment: AlignmentType.LEFT,
+    children: [text(clean(photo?.caption || 'Sem legenda.'), { bold: true, size: 20 })]
+  }));
 
   return new TableCell({
     width: { size: 50, type: WidthType.PERCENTAGE },
@@ -223,12 +272,10 @@ async function photoSectionElements(fotos: WordReportPhoto[]) {
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
     const chunk = chunks[chunkIndex];
     if (chunkIndex > 0) elements.push(new Paragraph({ children: [new PageBreak()] }));
-
-    elements.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 105 }, children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 28, color: BLUE })] }));
+    elements.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 85 }, children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 28, color: BLUE })] }));
     elements.push(await photoPairTable(chunk[0], chunk[1]));
-
     if (chunk.length > 2) {
-      elements.push(new Paragraph({ spacing: { after: 260 }, children: [text('', { size: 2 })] }));
+      elements.push(new Paragraph({ spacing: { after: 190 }, children: [text('', { size: 2 })] }));
       elements.push(await photoPairTable(chunk[2], chunk[3]));
     }
   }
@@ -236,26 +283,36 @@ async function photoSectionElements(fotos: WordReportPhoto[]) {
 }
 
 export async function downloadWordReport(visit: WordReportVisit) {
-  const infoTable = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [
-    infoRow('Data', formatDate(visit.data)),
-    infoRow('Designação + Unidade Escolar', `${clean(visit.designacao)} - ${clean(visit.unidade)}`),
-    infoRow('Endereço + Bairro', `${clean(visit.endereco)} - ${clean(visit.bairro)}`),
-    infoRow('Diretor(a) Geral', clean(visit.diretorGeral)),
-    infoRow('Representante E/GIN/6ª CRE', 'Engenheira Márcia Braga.')
-  ] });
-
-  const doc = new Document({ sections: [{
-    properties: { page: { size: { orientation: PageOrientation.PORTRAIT, width: 11906, height: 16838 }, margin: { top: 700, right: 500, bottom: 730, left: 500 } } },
-    headers: { default: pageHeader() },
-    footers: { default: pageFooter() },
-    children: [
-      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 110, after: 225 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
-      infoTable,
-      heading('Serviços Verificados'), paragraph(visit.servicos), heading('Observações'), paragraph(visit.observacoes), heading('Conclusão'), paragraph(visit.conclusao),
-      new Paragraph({ children: [new PageBreak()] }),
-      ...(await photoSectionElements(visit.fotos))
+  const infoTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      infoRow('Data', formatDate(visit.data)),
+      infoRow('Designação + Unidade Escolar', `${clean(visit.designacao)} - ${clean(visit.unidade)}`),
+      infoRow('Endereço + Bairro', `${clean(visit.endereco)} - ${clean(visit.bairro)}`),
+      infoRow('Diretor(a) Geral', clean(visit.diretorGeral)),
+      infoRow('Representante E/GIN/6ª CRE', 'Engenheira Márcia Braga.')
     ]
-  }] });
+  });
+
+  const doc = new Document({
+    sections: [{
+      properties: { page: { size: { orientation: PageOrientation.PORTRAIT, width: 11906, height: 16838 }, margin: { top: 700, right: 500, bottom: 730, left: 500 } } },
+      headers: { default: pageHeader() },
+      footers: { default: pageFooter() },
+      children: [
+        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 110, after: 225 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
+        infoTable,
+        heading('Serviços Verificados'),
+        paragraph(visit.servicos),
+        heading('Observações'),
+        paragraph(visit.observacoes),
+        heading('Conclusão'),
+        paragraph(visit.conclusao),
+        new Paragraph({ children: [new PageBreak()] }),
+        ...(await photoSectionElements(visit.fotos))
+      ]
+    }]
+  });
 
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
