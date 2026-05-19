@@ -3,6 +3,45 @@ import { setCurrentUser } from '../lib/session';
 
 const ADMIN_EMAIL = 'thaisopalka@gmail.com';
 
+type LoginResponse = {
+  ok?: boolean;
+  error?: string;
+  user?: Parameters<typeof setCurrentUser>[0];
+};
+
+async function readLoginResponse(response: Response): Promise<LoginResponse> {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text) as LoginResponse;
+  } catch {
+    return { error: text };
+  }
+}
+
+function friendlyLoginError(status: number, error?: string) {
+  const normalized = (error || '').toLowerCase();
+
+  if (status === 404) {
+    return 'O backend de login ainda não foi publicado no Vercel. Faça o redeploy e tente novamente.';
+  }
+
+  if (normalized.includes('supabase') || normalized.includes('configuration') || normalized.includes('configur')) {
+    return 'Login de usuários comuns ainda não está configurado no Vercel. Confira as variáveis SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.';
+  }
+
+  if (status === 401) {
+    return error || 'E-mail ou senha provisória incorretos.';
+  }
+
+  if (status === 403) {
+    return error || 'Usuário bloqueado pela administração.';
+  }
+
+  return error || 'Não foi possível entrar. Confira o e-mail e a senha.';
+}
+
 export default function Login() {
   const [email, setEmail] = useState(ADMIN_EMAIL);
   const [password, setPassword] = useState('');
@@ -12,7 +51,7 @@ export default function Login() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const trimmedEmail = email.trim();
+    const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail.includes('@') || !trimmedEmail.includes('.')) {
       setMessage('Digite um e-mail completo. Exemplo: thaisopalka@gmail.com');
       return;
@@ -36,7 +75,7 @@ export default function Login() {
     }
 
     setSubmitting(true);
-    setMessage('');
+    setMessage('Validando acesso...');
 
     try {
       const response = await fetch('/api/login', {
@@ -45,10 +84,10 @@ export default function Login() {
         body: JSON.stringify({ email: trimmedEmail, password })
       });
 
-      const data = await response.json();
+      const data = await readLoginResponse(response);
 
       if (!response.ok) {
-        setMessage(data.error || 'Não foi possível entrar. Confira o e-mail e a senha.');
+        setMessage(friendlyLoginError(response.status, data.error));
         setSubmitting(false);
         return;
       }
@@ -57,12 +96,12 @@ export default function Login() {
         setCurrentUser(data.user);
         window.location.assign('/');
       } else {
-        setMessage('Não foi possível entrar. Confira o e-mail e a senha.');
+        setMessage('Resposta de login inválida. Faça o redeploy do Vercel e tente novamente.');
         setSubmitting(false);
       }
     } catch (err) {
       console.error('Login error:', err);
-      setMessage('Erro ao conectar ao servidor. Tente novamente.');
+      setMessage('Erro ao conectar ao servidor de login. Verifique se o Vercel foi redeployado e tente novamente.');
       setSubmitting(false);
     }
   };
@@ -82,6 +121,7 @@ export default function Login() {
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="thaisopalka@gmail.com"
+            autoComplete="email"
             required
           />
 
@@ -92,6 +132,7 @@ export default function Login() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder="Digite sua senha"
+            autoComplete="current-password"
             required
           />
 
@@ -99,6 +140,10 @@ export default function Login() {
             {submitting ? 'Entrando...' : 'ENTRAR NO GINFOTOS'}
           </button>
         </form>
+
+        <p className="login-desc" style={{ marginTop: 16 }}>
+          Usuários criados no Admin devem entrar com o e-mail cadastrado e a senha provisória copiada no convite.
+        </p>
 
         {message && <p className="notice">{message}</p>}
       </div>
