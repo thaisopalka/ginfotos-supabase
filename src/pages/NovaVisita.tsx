@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 're
 import { supabase } from '../lib/supabaseClient';
 import { UserProfile } from '../App';
 import { appendDictation, startVoiceInput } from '../lib/voiceInput';
+import { fileToDataUrl } from '../lib/fileDataUrl';
 
 interface UnidadeOption {
   id: string;
@@ -25,6 +26,7 @@ interface PhotoItem {
   id: string;
   file: File;
   previewUrl: string;
+  dataUrl: string;
   caption: string;
 }
 
@@ -47,7 +49,7 @@ interface LocalVisitRecord {
   observacoes: string;
   conclusao: string;
   photo_count: number;
-  fotos: { name: string; caption: string }[];
+  fotos: { name: string; caption: string; dataUrl?: string }[];
   created_by?: string;
   created_at: string;
 }
@@ -166,15 +168,23 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     [unidadeId, unidades, filteredUnidades]
   );
 
-  const addFiles = (files: FileList | null) => {
+  const addFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const newPhotos = Array.from(files).map((file) => ({
-      id: `${Date.now()}-${file.name}-${Math.random()}`,
-      file,
-      previewUrl: URL.createObjectURL(file),
-      caption: ''
-    }));
-    setPhotos((current) => [...current, ...newPhotos]);
+    setMessage('Preparando fotos para o relatório Word...');
+
+    try {
+      const newPhotos = await Promise.all(Array.from(files).map(async (file) => ({
+        id: `${Date.now()}-${file.name}-${Math.random()}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        dataUrl: await fileToDataUrl(file),
+        caption: ''
+      })));
+      setPhotos((current) => [...current, ...newPhotos]);
+      setMessage(`${newPhotos.length} foto(s) pronta(s) para aparecer no relatório Word.`);
+    } catch {
+      setMessage('Não foi possível incorporar uma ou mais fotos. Tente anexar novamente.');
+    }
   };
 
   const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -295,7 +305,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       observacoes,
       conclusao,
       photo_count: photos.length,
-      fotos: photos.map((photo) => ({ name: photo.file.name, caption: photo.caption })),
+      fotos: photos.map((photo) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl })),
       created_by: profile?.email,
       created_at: new Date().toISOString()
     });
@@ -304,8 +314,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
     setMessage(
       savedInSupabase
-        ? 'Visita salva com sucesso. As fotos foram vinculadas e o registro tambem ficou disponivel localmente.'
-        : 'Visita salva no dispositivo. O Supabase nao respondeu, mas os dados principais nao foram perdidos.'
+        ? 'Visita salva com sucesso. As fotos foram incorporadas ao relatório Word e também enviadas ao Supabase.'
+        : 'Visita salva no dispositivo. As fotos foram incorporadas ao relatório Word.'
     );
     resetFormAfterSave();
     setSaving(false);
@@ -349,7 +359,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
           <div className="field"><label htmlFor="conclusao">Conclusao</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
 
           <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}>
-            <h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">Tire fotos na hora pelo celular ou anexe imagens da galeria/computador. Cada foto pode receber legenda com áudio.</p>
+            <h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">Tire fotos na hora pelo celular ou anexe imagens da galeria/computador. Cada foto pode receber legenda com áudio e será incorporada ao relatório Word.</p>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div>
             <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />
             {photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}
