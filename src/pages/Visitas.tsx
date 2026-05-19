@@ -125,14 +125,15 @@ export default function Visitas({ profile }: VisitasProps) {
     async function loadVisitas() {
       setLoading(true);
       const localVisits = loadLocalVisits().map(fromLocal);
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 5000);
 
       try {
-        const timeout = new Promise<never>((_, reject) => {
-          window.setTimeout(() => reject(new Error('timeout')), 5000);
-        });
-
-        const request = supabase.from('visitas').select('*').order('visit_date', { ascending: false });
-        const { data, error } = await Promise.race([request, timeout]);
+        const { data, error } = await supabase
+          .from('visitas')
+          .select('*')
+          .order('visit_date', { ascending: false })
+          .abortSignal(controller.signal);
 
         if (!active) return;
 
@@ -151,6 +152,7 @@ export default function Visitas({ profile }: VisitasProps) {
         setMessage('Tempo esgotado ao carregar o Supabase. Mostrando visitas salvas no dispositivo.');
         setVisitas(localVisits);
       } finally {
+        window.clearTimeout(timeoutId);
         if (active) setLoading(false);
       }
     }
