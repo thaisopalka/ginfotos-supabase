@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { UserProfile } from '../App';
+import { appendDictation, startVoiceInput } from '../lib/voiceInput';
 
 interface UnidadeOption {
   id: string;
@@ -118,6 +119,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState('');
   const captureInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -187,6 +189,11 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const updateCaption = (id: string, caption: string) => {
     setPhotos((current) => current.map((photo) => (photo.id === id ? { ...photo, caption } : photo)));
+  };
+
+  const dictateCaption = (id: string) => {
+    const current = photos.find((photo) => photo.id === id)?.caption || '';
+    startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus);
   };
 
   const removePhoto = (id: string) => {
@@ -293,6 +300,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       created_at: new Date().toISOString()
     });
 
+    window.dispatchEvent(new Event('ginfotos-visitas-updated'));
+
     setMessage(
       savedInSupabase
         ? 'Visita salva com sucesso. As fotos foram vinculadas e o registro tambem ficou disponivel localmente.'
@@ -301,6 +310,10 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     resetFormAfterSave();
     setSaving(false);
   };
+
+  const voiceButton = (onClick: () => void) => (
+    <button type="button" className="voice-button" onClick={onClick}>🎤 FALAR E CORRIGIR TEXTO</button>
+  );
 
   return (
     <div className="dashboard-page">
@@ -314,108 +327,36 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
           <div className="field">
             <label htmlFor="busca-unidade">Buscar unidade escolar</label>
-            <input
-              id="busca-unidade"
-              value={unidadeQuery}
-              onChange={(event) => setUnidadeQuery(event.target.value)}
-              placeholder="Buscar por designacao, unidade, bairro, endereco ou diretor"
-            />
+            <input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designacao, unidade, bairro, endereco ou diretor" />
           </div>
 
           <div className="field">
             <label htmlFor="unidade">Unidade Escolar</label>
             <select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>
-              {filteredUnidades.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.designacao ? `${item.designacao} - ${item.name}` : item.name}
-                </option>
-              ))}
+              {filteredUnidades.map((item) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}
             </select>
           </div>
 
-          {selectedUnidade && (
-            <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}>
-              <strong>{selectedUnidade.designacao || 'Designacao nao informada'} - {selectedUnidade.name}</strong>
-              <p className="page-description">Endereco: {selectedUnidade.address || 'Nao informado'}</p>
-              <p className="page-description">Bairro: {selectedUnidade.bairro || 'Nao informado'}</p>
-              <p className="page-description">Telefone: {selectedUnidade.telefone || 'Nao informado'}</p>
-              <p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Nao informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p>
-              <p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p>
-            </div>
-          )}
+          {selectedUnidade && <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}><strong>{selectedUnidade.designacao || 'Designacao nao informada'} - {selectedUnidade.name}</strong><p className="page-description">Endereco: {selectedUnidade.address || 'Nao informado'}</p><p className="page-description">Bairro: {selectedUnidade.bairro || 'Nao informado'}</p><p className="page-description">Telefone: {selectedUnidade.telefone || 'Nao informado'}</p><p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Nao informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p><p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p></div>}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-            <div className="field">
-              <label htmlFor="visitDate">Data da visita</label>
-              <input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required />
-            </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}><div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div><div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item) => <option key={item}>{item}</option>)}</select></div></div>
 
-            <div className="field">
-              <label htmlFor="tipo">Tipo de visita/obra</label>
-              <select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>
-                {visitTypes.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <div className="field"><label htmlFor="representante">Representante E/6 CRE/GIN</label><input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required /></div>
 
-          <div className="field">
-            <label htmlFor="representante">Representante E/6 CRE/GIN</label>
-            <input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required />
-          </div>
-
-          <div className="field">
-            <label htmlFor="servicos">Servicos Verificados</label>
-            <textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, servicos e necessidades verificadas." />
-          </div>
-
-          <div className="field">
-            <label htmlFor="observacoes">Observacoes</label>
-            <textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} />
-          </div>
-
-          <div className="field">
-            <label htmlFor="conclusao">Conclusao</label>
-            <textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} />
-          </div>
+          {voiceStatus && <p className="notice">{voiceStatus}</p>}
+          <div className="field"><label htmlFor="servicos">Servicos Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, servicos e necessidades verificadas." /></div>
+          <div className="field"><label htmlFor="observacoes">Observacoes</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
+          <div className="field"><label htmlFor="conclusao">Conclusao</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
 
           <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}>
-            <h2 style={{ marginTop: 0 }}>Fotos da visita</h2>
-            <p className="page-description">Tire fotos na hora pelo celular ou anexe imagens da galeria/computador. Cada foto pode receber legenda.</p>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>
-              <button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>
-                TIRAR FOTO AGORA
-              </button>
-              <button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>
-                ANEXAR FOTOS
-              </button>
-              <span className="status-pill">{photos.length} foto(s)</span>
-            </div>
-            <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} />
-            <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />
-
-            {photos.length > 0 && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>
-                {photos.map((photo) => (
-                  <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}>
-                    <img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} />
-                    <label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label>
-                    <textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite a legenda da foto." />
-                    <button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>
-                      Excluir foto
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">Tire fotos na hora pelo celular ou anexe imagens da galeria/computador. Cada foto pode receber legenda com áudio.</p>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div>
+            <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />
+            {photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}
           </div>
 
-          <button className="primary large" type="submit" disabled={saving}>
-            {saving ? 'SALVANDO...' : 'SALVAR VISITA'}
-          </button>
+          <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO...' : 'SALVAR VISITA'}</button>
         </form>
-
         {message && <p className="notice">{message}</p>}
       </div>
     </div>
