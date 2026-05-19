@@ -14,6 +14,7 @@ import Relatorios from './pages/Relatorios';
 import WhatsappDiretores from './pages/WhatsappDiretores';
 import Historico from './pages/Historico';
 import Perfil from './pages/Perfil';
+import MapaUnidades from './pages/MapaUnidades';
 import NotFound from './pages/NotFound';
 
 export interface UserProfile {
@@ -47,6 +48,7 @@ function App() {
             <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
             <Route path="/" element={<ProtectedRoute><Dashboard profile={profile} /></ProtectedRoute>} />
             <Route path="/unidades" element={<ProtectedRoute><Unidades /></ProtectedRoute>} />
+            <Route path="/mapa-unidades" element={<ProtectedRoute><MapaUnidades /></ProtectedRoute>} />
             <Route path="/nova-visita" element={<ProtectedRoute><NovaVisita profile={profile} /></ProtectedRoute>} />
             <Route path="/visitas" element={<ProtectedRoute><Visitas profile={profile} /></ProtectedRoute>} />
             <Route path="/pastas" element={<ProtectedRoute><Pastas /></ProtectedRoute>} />
