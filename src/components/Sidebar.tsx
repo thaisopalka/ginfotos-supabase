@@ -12,6 +12,7 @@ const navItems = [
   { to: '/nova-visita', label: 'Nova Visita', icon: '➕' },
   { to: '/visitas', label: 'Visitas Técnicas', icon: '📋' },
   { to: '/unidades', label: 'Unidades Escolares', icon: '🏫' },
+  { to: '/mapa-unidades', label: 'Mapa das Unidades', icon: '🗺️' },
   { to: '/relatorios', label: 'Relatórios Word', icon: '📄' },
   { to: '/whatsapp-diretores', label: 'WhatsApp Diretores', icon: '💬' },
   { to: '/pastas', label: 'Pastas', icon: '📁' },
