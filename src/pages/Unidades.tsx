@@ -33,7 +33,8 @@ const emptyForm: Unidade = {
   diretor_geral: '',
   celular_diretor_geral: '',
   diretor_adjunto: '',
-  celular_diretor_adjunto: ''
+  celular_diretor_adjunto: '',
+  origem: 'Local'
 };
 
 function loadLocalUnidades(): Unidade[] {
@@ -67,8 +68,9 @@ function normalizeUnidade(raw: Partial<Unidade>): Unidade {
 function mergeUnidades(...groups: Unidade[][]) {
   const map = new Map<string, Unidade>();
   groups.flat().forEach((item) => {
-    const key = (item.designacao || item.id || item.name).toLowerCase();
-    if (!map.has(key)) map.set(key, item);
+    const normalized = normalizeUnidade(item);
+    const key = (normalized.designacao || normalized.id || normalized.name).toLowerCase();
+    if (!map.has(key)) map.set(key, normalized);
   });
   return Array.from(map.values()).sort((a, b) => (a.designacao || a.name).localeCompare(b.designacao || b.name));
 }
@@ -80,7 +82,7 @@ function parseImportText(text: string): Unidade[] {
     .filter(Boolean)
     .map((line) => line.split('\t').length > 1 ? line.split('\t') : line.split(';'))
     .map((cols) => normalizeUnidade({
-      id: `local-${Date.now()}-${Math.random()}`,
+      id: `local-${cols[0]?.trim() || Date.now()}-${Math.random()}`,
       designacao: cols[0]?.trim() || '',
       name: cols[1]?.trim() || '',
       address: cols[2]?.trim() || '',
@@ -93,6 +95,24 @@ function parseImportText(text: string): Unidade[] {
       origem: 'Importada'
     }))
     .filter((item) => item.name && item.name !== 'Unidade sem nome');
+}
+
+function toSupabaseRecord(record: Unidade) {
+  return {
+    name: record.name,
+    address: record.address || '',
+    designacao: record.designacao || '',
+    bairro: record.bairro || '',
+    telefone: record.telefone || '',
+    diretor_geral: record.diretor_geral || '',
+    celular_diretor_geral: record.celular_diretor_geral || '',
+    diretor_adjunto: record.diretor_adjunto || '',
+    celular_diretor_adjunto: record.celular_diretor_adjunto || ''
+  };
+}
+
+function withoutUnit(list: Unidade[], record: Unidade) {
+  return list.filter((item) => item.id !== record.id && (item.designacao || '') !== (record.designacao || ''));
 }
 
 export default function Unidades() {
@@ -108,12 +128,13 @@ export default function Unidades() {
     const local = loadLocalUnidades();
 
     try {
-      const { data, error } = await supabase.from('unidades').select('*').order('name');
+      const { data, error } = await supabase.from('unidades').select('*').order('designacao');
       if (!error && data && data.length > 0) {
         setUnidades(mergeUnidades(local, (data as Unidade[]).map((item) => ({ ...item, origem: 'Supabase' }))));
+        setMessage(`${data.length} unidade(s) carregada(s) do Supabase.`);
       } else {
         setUnidades(mergeUnidades(local, fallbackUnidades));
-        if (error) setMessage('Supabase nao carregou. Mostrando base local/provisoria.');
+        setMessage(error ? `Supabase nao carregou: ${error.message}. Mostrando base local/provisoria.` : 'Tabela unidades vazia no Supabase. Mostrando base local/provisoria.');
       }
     } catch {
       setUnidades(mergeUnidades(local, fallbackUnidades));
@@ -131,7 +152,7 @@ export default function Unidades() {
     const term = query.trim().toLowerCase();
     if (!term) return unidades;
     return unidades.filter((item) =>
-      [item.designacao, item.name, item.address, item.bairro, item.telefone, item.diretor_geral, item.diretor_adjunto]
+      [item.designacao, item.name, item.address, item.bairro, item.telefone, item.diretor_geral, item.celular_diretor_geral, item.diretor_adjunto, item.celular_diretor_adjunto, item.origem]
         .join(' ')
         .toLowerCase()
         .includes(term)
@@ -144,39 +165,29 @@ export default function Unidades() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const record = normalizeUnidade({ ...form, id: form.id || `local-${Date.now()}`, origem: 'Local' });
+    const record = normalizeUnidade({ ...form, id: form.id || `local-${Date.now()}`, origem: form.origem || 'Local' });
 
     const local = loadLocalUnidades();
-    const withoutCurrent = local.filter((item) => item.id !== record.id && item.designacao !== record.designacao);
-    saveLocalUnidades([record, ...withoutCurrent]);
-    setUnidades(mergeUnidades([record], withoutCurrent, unidades));
+    const updatedLocal = [record, ...withoutUnit(local, record)];
+    saveLocalUnidades(updatedLocal);
+    setUnidades(mergeUnidades(updatedLocal, unidades));
     setForm(emptyForm);
     setMessage('Unidade salva localmente. Tentando sincronizar com Supabase.');
 
-    const { error } = await supabase.from('unidades').upsert([
-      {
-        id: record.id.startsWith('local-') ? undefined : record.id,
-        name: record.name,
-        address: record.address,
-        designacao: record.designacao,
-        bairro: record.bairro,
-        telefone: record.telefone,
-        diretor_geral: record.diretor_geral,
-        celular_diretor_geral: record.celular_diretor_geral,
-        diretor_adjunto: record.diretor_adjunto,
-        celular_diretor_adjunto: record.celular_diretor_adjunto
+    try {
+      const { error } = await supabase.from('unidades').upsert([toSupabaseRecord(record)], { onConflict: 'designacao' });
+      if (error) {
+        setMessage(`Unidade salva no dispositivo. Supabase nao aceitou: ${error.message}`);
+      } else {
+        setMessage('Unidade salva, editada e sincronizada com Supabase.');
+        fetchUnidades();
       }
-    ]);
-
-    if (error) {
-      setMessage(`Unidade salva no dispositivo. Supabase nao aceitou todos os campos: ${error.message}`);
-    } else {
-      setMessage('Unidade salva e sincronizada.');
-      fetchUnidades();
+    } catch {
+      setMessage('Unidade salva no dispositivo. Supabase nao respondeu.');
     }
   };
 
-  const handleImport = () => {
+  const handleImport = async () => {
     const imported = parseImportText(importText);
     if (imported.length === 0) {
       setMessage('Nenhuma unidade valida encontrada para importar.');
@@ -186,12 +197,56 @@ export default function Unidades() {
     saveLocalUnidades(local);
     setUnidades(mergeUnidades(local, unidades));
     setImportText('');
-    setMessage(`${imported.length} unidade(s) importada(s) no dispositivo.`);
+    setMessage(`${imported.length} unidade(s) importada(s) no dispositivo. Tentando sincronizar com Supabase.`);
+
+    try {
+      const { error } = await supabase.from('unidades').upsert(imported.map(toSupabaseRecord), { onConflict: 'designacao' });
+      setMessage(error ? `${imported.length} unidade(s) importada(s) localmente. Supabase falhou: ${error.message}` : `${imported.length} unidade(s) importada(s) e sincronizada(s).`);
+      if (!error) fetchUnidades();
+    } catch {
+      setMessage(`${imported.length} unidade(s) importada(s) localmente. Supabase nao respondeu.`);
+    }
+  };
+
+  const handleSyncLocal = async () => {
+    const local = loadLocalUnidades().filter((item) => item.origem !== 'Base provisoria');
+    if (local.length === 0) {
+      setMessage('Nao ha unidades locais/importadas para sincronizar.');
+      return;
+    }
+
+    setMessage(`Sincronizando ${local.length} unidade(s) locais com Supabase...`);
+    try {
+      const { error } = await supabase.from('unidades').upsert(local.map(toSupabaseRecord), { onConflict: 'designacao' });
+      if (error) setMessage(`Supabase nao aceitou a sincronizacao: ${error.message}`);
+      else {
+        setMessage(`${local.length} unidade(s) sincronizada(s) com Supabase.`);
+        fetchUnidades();
+      }
+    } catch {
+      setMessage('Supabase nao respondeu durante a sincronizacao.');
+    }
   };
 
   const handleEdit = (item: Unidade) => {
     setForm(normalizeUnidade(item));
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDelete = async (item: Unidade) => {
+    if (!window.confirm(`Excluir ${item.designacao || ''} - ${item.name}?`)) return;
+    const local = withoutUnit(loadLocalUnidades(), item);
+    saveLocalUnidades(local);
+    setUnidades((current) => withoutUnit(current, item));
+    setMessage('Unidade removida localmente. Tentando remover do Supabase.');
+
+    try {
+      const query = item.designacao ? supabase.from('unidades').delete().eq('designacao', item.designacao) : supabase.from('unidades').delete().eq('id', item.id);
+      const { error } = await query;
+      setMessage(error ? `Unidade removida localmente. Supabase nao removeu: ${error.message}` : 'Unidade excluida localmente e no Supabase.');
+    } catch {
+      setMessage('Unidade removida localmente. Supabase nao respondeu.');
+    }
   };
 
   const handleClearLocal = () => {
@@ -212,7 +267,7 @@ export default function Unidades() {
       </div>
 
       <section className="page-card">
-        <p className="page-description">Cadastre, pesquise, edite e importe unidades escolares da E/6 CRE/GIN.</p>
+        <p className="page-description">Cadastre, pesquise, edite, exclua e importe unidades escolares da E/6 CRE/GIN.</p>
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 14, marginTop: 18 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
             <div className="field"><label>Designacao</label><input value={form.designacao || ''} onChange={(e) => updateForm('designacao', e.target.value)} placeholder="06.22.001" /></div>
@@ -228,8 +283,9 @@ export default function Unidades() {
             <div className="field"><label>Celular Adjunto(a)</label><input value={form.celular_diretor_adjunto || ''} onChange={(e) => updateForm('celular_diretor_adjunto', e.target.value)} /></div>
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button className="primary" type="submit">Salvar Unidade</button>
+            <button className="primary" type="submit">{form.id ? 'Salvar edicao' : 'Adicionar unidade'}</button>
             <button className="empty-link" type="button" onClick={() => setForm(emptyForm)}>Limpar formulario</button>
+            <button className="empty-link" type="button" onClick={handleSyncLocal}>Sincronizar base local com Supabase</button>
             <button className="empty-link" type="button" onClick={handleClearLocal}>Limpar base local</button>
           </div>
         </form>
@@ -241,48 +297,21 @@ export default function Unidades() {
         <h2 style={{ marginTop: 0 }}>Colar dados da planilha</h2>
         <p className="page-description">Cole linhas copiadas do Excel nesta ordem: DESIGNACAO, UNIDADE ESCOLAR, ENDERECO, BAIRRO, TELEFONE, DIRETOR GERAL, CELULAR DIRETOR, DIRETOR ADJUNTO, CELULAR ADJUNTO.</p>
         <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} placeholder="Cole aqui as linhas da planilha" style={{ marginTop: 14 }} />
-        <div style={{ marginTop: 12 }}>
-          <button type="button" className="primary" onClick={handleImport}>Importar para o dispositivo</button>
-        </div>
+        <div style={{ marginTop: 12 }}><button type="button" className="primary" onClick={handleImport}>Importar e sincronizar</button></div>
       </section>
 
       <section className="page-card">
-        <div className="recent-header">
-          <div>
-            <p className="page-label">Consulta</p>
-            <h2>Lista de Unidades</h2>
-          </div>
-          <span className="status-pill">{loading ? 'Carregando...' : `${filtered.length} unidade(s)`}</span>
-        </div>
+        <div className="recent-header"><div><p className="page-label">Consulta</p><h2>Lista de Unidades</h2></div><span className="status-pill">{loading ? 'Carregando...' : `${filtered.length} unidade(s)`}</span></div>
         <input placeholder="Buscar por designacao, unidade, endereco, bairro, telefone ou diretor" value={query} onChange={(e) => setQuery(e.target.value)} />
         <div style={{ overflowX: 'auto', marginTop: 18 }}>
           <table className="table-list">
-            <thead>
-              <tr>
-                <th>Designacao</th>
-                <th>Unidade</th>
-                <th>Endereco</th>
-                <th>Bairro</th>
-                <th>Diretor(a)</th>
-                <th>Celular</th>
-                <th>Origem</th>
-                <th>Acao</th>
+            <thead><tr><th>Designacao</th><th>Unidade</th><th>Endereco</th><th>Bairro</th><th>Diretor(a)</th><th>Celular</th><th>Adjunto(a)</th><th>Celular Adj.</th><th>Origem</th><th>Acoes</th></tr></thead>
+            <tbody>{filtered.map((item) => (
+              <tr key={`${item.origem}-${item.id}-${item.designacao}`}>
+                <td>{item.designacao || '-'}</td><td>{item.name}</td><td>{item.address || '-'}</td><td>{item.bairro || '-'}</td><td>{item.diretor_geral || '-'}</td><td>{item.celular_diretor_geral || '-'}</td><td>{item.diretor_adjunto || '-'}</td><td>{item.celular_diretor_adjunto || '-'}</td><td><span className="status-chip">{item.origem || 'Supabase'}</span></td>
+                <td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => handleEdit(item)}>Editar</button><button type="button" className="empty-link danger-link" onClick={() => handleDelete(item)}>Excluir</button></div></td>
               </tr>
-            </thead>
-            <tbody>
-              {filtered.map((item) => (
-                <tr key={`${item.origem}-${item.id}-${item.designacao}`}>
-                  <td>{item.designacao || '-'}</td>
-                  <td>{item.name}</td>
-                  <td>{item.address || '-'}</td>
-                  <td>{item.bairro || '-'}</td>
-                  <td>{item.diretor_geral || '-'}</td>
-                  <td>{item.celular_diretor_geral || '-'}</td>
-                  <td><span className="status-chip">{item.origem || 'Supabase'}</span></td>
-                  <td><button type="button" className="empty-link" onClick={() => handleEdit(item)}>Editar</button></td>
-                </tr>
-              ))}
-            </tbody>
+            ))}</tbody>
           </table>
         </div>
       </section>
