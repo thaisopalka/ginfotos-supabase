@@ -81,7 +81,7 @@ function getImageType(dataUrl: string): 'jpg' | 'png' | 'gif' | 'bmp' {
   return 'jpg';
 }
 
-async function getFittedImageSize(dataUrl: string, maxWidth = 245, maxHeight = 175) {
+async function getFittedImageSize(dataUrl: string, maxWidth = 325, maxHeight = 248) {
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
@@ -104,6 +104,17 @@ function text(value: string, options: { bold?: boolean; size?: number; color?: s
     size: options.size ?? 22,
     color: options.color ?? '111827'
   });
+}
+
+function noBorders() {
+  return {
+    top: { style: BorderStyle.NONE },
+    bottom: { style: BorderStyle.NONE },
+    left: { style: BorderStyle.NONE },
+    right: { style: BorderStyle.NONE },
+    insideHorizontal: { style: BorderStyle.NONE },
+    insideVertical: { style: BorderStyle.NONE }
+  };
 }
 
 function heading(value: string) {
@@ -144,25 +155,29 @@ function pageHeader() {
     children: [
       new Table({
         width: { size: 100, type: WidthType.PERCENTAGE },
-        borders: {
-          top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE }
-        },
+        borders: noBorders(),
         rows: [
           new TableRow({
             children: [
               new TableCell({
+                width: { size: 32, type: WidthType.PERCENTAGE },
                 shading: { type: ShadingType.CLEAR, fill: BLUE },
-                margins: { top: 120, bottom: 120, left: 240, right: 240 },
+                verticalAlign: VerticalAlign.CENTER,
+                margins: { top: 120, bottom: 120, left: 170, right: 170 },
                 children: [
-                  new Paragraph({ children: [text('PREFEITURA', { bold: true, size: 18, color: 'FFFFFF' })] }),
-                  new Paragraph({ children: [text('RIO', { bold: true, size: 42, color: 'FFFFFF' })] })
+                  new Paragraph({ alignment: AlignmentType.LEFT, children: [text('PREFEITURA', { bold: true, size: 15, color: 'FFFFFF' })] }),
+                  new Paragraph({ alignment: AlignmentType.LEFT, children: [text('RIO', { bold: true, size: 33, color: 'FFFFFF' }), text('    Educação', { size: 17, color: 'FFFFFF' })] })
                 ]
               }),
               new TableCell({
-                shading: { type: ShadingType.CLEAR, fill: BLUE },
+                width: { size: 68, type: WidthType.PERCENTAGE },
                 verticalAlign: VerticalAlign.CENTER,
-                margins: { top: 120, bottom: 120, left: 240, right: 240 },
-                children: [new Paragraph({ alignment: AlignmentType.LEFT, children: [text('Educação', { size: 28, color: 'FFFFFF' })] })]
+                margins: { top: 120, bottom: 120, left: 240, right: 140 },
+                children: [
+                  new Paragraph({ alignment: AlignmentType.CENTER, children: [text('SECRETARIA MUNICIPAL DE EDUCAÇÃO', { bold: true, size: 21, color: '111827' })] }),
+                  new Paragraph({ alignment: AlignmentType.CENTER, children: [text('6ª COORDENADORIA REGIONAL DE EDUCAÇÃO', { bold: true, size: 21, color: '111827' })] }),
+                  new Paragraph({ alignment: AlignmentType.CENTER, children: [text('E/6ª CRE/GIN', { bold: true, size: 21, color: '111827' })] })
+                ]
               })
             ]
           })
@@ -210,19 +225,19 @@ async function photoCell(photo?: WordReportPhoto, index = 0) {
   }
 
   children.push(new Paragraph({
-    spacing: { before: 100 },
+    spacing: { before: 90 },
     children: [text(`Foto ${index + 1}. `, { bold: true, size: 20 }), text(clean(photo?.caption || 'Sem legenda.'), { size: 20 })]
   }));
 
   return new TableCell({
     width: { size: 50, type: WidthType.PERCENTAGE },
     verticalAlign: VerticalAlign.TOP,
-    margins: { top: 120, bottom: 120, left: 120, right: 120 },
+    margins: { top: 110, bottom: 110, left: 110, right: 110 },
     children
   });
 }
 
-async function photoRows(fotos: WordReportPhoto[]) {
+async function photoRows(fotos: WordReportPhoto[], startIndex: number) {
   if (fotos.length === 0) {
     return [new TableRow({ children: [new TableCell({ columnSpan: 2, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Nenhuma foto incorporada neste relatório.', { color: '64748B' })] })] })] })];
   }
@@ -231,10 +246,29 @@ async function photoRows(fotos: WordReportPhoto[]) {
   for (let index = 0; index < fotos.length; index += 2) {
     rows.push(new TableRow({
       cantSplit: true,
-      children: [await photoCell(fotos[index], index), await photoCell(fotos[index + 1], index + 1)]
+      children: [await photoCell(fotos[index], startIndex + index), await photoCell(fotos[index + 1], startIndex + index + 1)]
     }));
   }
   return rows;
+}
+
+async function photoSectionElements(fotos: WordReportPhoto[]) {
+  const chunks: WordReportPhoto[][] = [];
+  for (let index = 0; index < fotos.length; index += 4) {
+    chunks.push(fotos.slice(index, index + 4));
+  }
+  if (chunks.length === 0) chunks.push([]);
+
+  const elements: Array<Paragraph | Table> = [];
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    if (chunkIndex > 0) elements.push(new Paragraph({ children: [new PageBreak()] }));
+    elements.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 180 }, children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 30, color: BLUE })] }));
+    elements.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: await photoRows(chunks[chunkIndex], chunkIndex * 4)
+    }));
+  }
+  return elements;
 }
 
 export async function downloadWordReport(visit: WordReportVisit) {
@@ -249,11 +283,6 @@ export async function downloadWordReport(visit: WordReportVisit) {
     ]
   });
 
-  const photosTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: await photoRows(visit.fotos)
-  });
-
   const doc = new Document({
     sections: [
       {
@@ -266,10 +295,7 @@ export async function downloadWordReport(visit: WordReportVisit) {
         headers: { default: pageHeader() },
         footers: { default: pageFooter() },
         children: [
-          new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 120, after: 80 }, children: [text('SECRETARIA MUNICIPAL DE EDUCAÇÃO', { bold: true, size: 22 })] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 }, children: [text('6ª COORDENADORIA REGIONAL DE EDUCAÇÃO', { bold: true, size: 22 })] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 220 }, children: [text('E/6ª CRE/GIN', { bold: true, size: 22 })] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 260 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
+          new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 220, after: 260 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
           infoTable,
           heading('Serviços Verificados'),
           paragraph(visit.servicos),
@@ -278,8 +304,7 @@ export async function downloadWordReport(visit: WordReportVisit) {
           heading('Conclusão'),
           paragraph(visit.conclusao),
           new Paragraph({ children: [new PageBreak()] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 220 }, children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 30, color: BLUE })] }),
-          photosTable
+          ...(await photoSectionElements(visit.fotos))
         ]
       }
     ]
