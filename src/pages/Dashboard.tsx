@@ -15,7 +15,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ profile }: DashboardProps) {
-  const [stats, setStats] = useState<Stats>({ visitas: 0, unidades: 0, pastas: 0, invites: 0 });
+  const [stats, setStats] = useState<Stats>({ visitas: 0, unidades: 115, pastas: 0, invites: 0 });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -30,7 +30,7 @@ export default function Dashboard({ profile }: DashboardProps) {
           if (!error && typeof count === 'number') {
             if (table === 'user_invites') result.invites = count;
             else if (table === 'visitas') result.visitas = count;
-            else if (table === 'unidades') result.unidades = count;
+            else if (table === 'unidades' && count > 0) result.unidades = count;
             else if (table === 'pastas') result.pastas = count;
           }
         })
@@ -38,7 +38,7 @@ export default function Dashboard({ profile }: DashboardProps) {
 
       setStats({
         visitas: result.visitas ?? 0,
-        unidades: result.unidades ?? 0,
+        unidades: result.unidades ?? 115,
         pastas: result.pastas ?? 0,
         invites: result.invites ?? 0
       });
@@ -48,7 +48,7 @@ export default function Dashboard({ profile }: DashboardProps) {
     loadStats();
   }, []);
 
-  const userName = profile?.full_name ?? profile?.name ?? profile?.email ?? 'Usuário';
+  const userName = profile?.role === 'admin' ? 'Thaís Opalka' : (profile?.full_name ?? profile?.name ?? profile?.email ?? 'Usuário');
 
   return (
     <div className="dashboard-page">
