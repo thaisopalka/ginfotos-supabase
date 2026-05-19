@@ -6,6 +6,13 @@ interface LocalVisitRecord {
   unidade_id: string;
   unidade_nome: string;
   designacao?: string | null;
+  endereco?: string | null;
+  bairro?: string | null;
+  telefone?: string | null;
+  diretor_geral?: string | null;
+  celular_diretor_geral?: string | null;
+  diretor_adjunto?: string | null;
+  celular_diretor_adjunto?: string | null;
   visit_date: string;
   tipo: string;
   representante: string;
@@ -30,7 +37,15 @@ interface HistoryItem {
   date: string;
   type: string;
   title: string;
+  unidade: string;
+  designacao: string;
+  bairro: string;
+  telefone: string;
+  diretor: string;
+  representante: string;
+  fotos: number;
   description: string;
+  conclusion: string;
   origin: string;
 }
 
@@ -70,27 +85,70 @@ function notesValue(notes: string | null | undefined, label: string) {
   return line ? line.replace(new RegExp(`^${label}:?\\s*`, 'i'), '').trim() : '';
 }
 
+function valueOrDefault(value?: string | null) {
+  return value && value.trim() ? value : 'Nao informado';
+}
+
 function localVisitToHistory(visit: LocalVisitRecord): HistoryItem {
+  const designacao = valueOrDefault(visit.designacao || visit.unidade_id);
+  const unidade = valueOrDefault(visit.unidade_nome);
   return {
     id: `local-${visit.id}`,
     date: visit.created_at || visit.visit_date,
     type: 'Visita salva',
-    title: `${visit.designacao || visit.unidade_id || 'Sem designacao'} - ${visit.unidade_nome}`,
-    description: `${visit.tipo || 'VISTORIA TECNICA'} | ${visit.photo_count || 0} foto(s) | ${visit.servicos || visit.observacoes || 'Sem resumo'}`,
+    title: `${designacao} - ${unidade}`,
+    unidade,
+    designacao,
+    bairro: valueOrDefault(visit.bairro),
+    telefone: valueOrDefault(visit.telefone),
+    diretor: valueOrDefault(visit.diretor_geral),
+    representante: valueOrDefault(visit.representante),
+    fotos: visit.photo_count || 0,
+    description: `${visit.tipo || 'VISTORIA TECNICA'} | ${visit.servicos || visit.observacoes || 'Sem resumo'}`,
+    conclusion: valueOrDefault(visit.conclusao),
     origin: 'Dispositivo'
   };
 }
 
 function supabaseVisitToHistory(visit: SupabaseVisit): HistoryItem {
   const tipo = notesValue(visit.notes, 'Tipo de visita/obra') || 'VISTORIA TECNICA';
+  const unidade = valueOrDefault(notesValue(visit.notes, 'Unidade escolar') || visit.unidade_id);
+  const designacao = valueOrDefault(notesValue(visit.notes, 'Designacao') || visit.unidade_id);
   const resumo = notesValue(visit.notes, 'Servicos verificados') || visit.notes || 'Visita sincronizada';
   return {
     id: `supabase-${visit.id}`,
     date: visit.visit_date || '',
     type: 'Visita sincronizada',
-    title: visit.unidade_id || 'Unidade nao informada',
+    title: `${designacao} - ${unidade}`,
+    unidade,
+    designacao,
+    bairro: valueOrDefault(notesValue(visit.notes, 'Bairro')),
+    telefone: valueOrDefault(notesValue(visit.notes, 'Telefone')),
+    diretor: valueOrDefault(notesValue(visit.notes, 'Diretor geral') || notesValue(visit.notes, 'Diretor(a) geral')),
+    representante: valueOrDefault(visit.visitor_name || notesValue(visit.notes, 'Representante E/6 CRE/GIN')),
+    fotos: 0,
     description: `${tipo} | ${resumo}`,
+    conclusion: valueOrDefault(notesValue(visit.notes, 'Conclusao')),
     origin: 'Supabase'
+  };
+}
+
+function normalizeManualItem(item: HistoryItem): HistoryItem {
+  return {
+    id: item.id,
+    date: item.date,
+    type: item.type || 'Registro manual',
+    title: item.title,
+    unidade: item.unidade || 'Registro manual',
+    designacao: item.designacao || 'Nao informado',
+    bairro: item.bairro || 'Nao informado',
+    telefone: item.telefone || 'Nao informado',
+    diretor: item.diretor || 'Nao informado',
+    representante: item.representante || 'Nao informado',
+    fotos: item.fotos || 0,
+    description: item.description,
+    conclusion: item.conclusion || 'Nao informado',
+    origin: item.origin || 'Dispositivo'
   };
 }
 
@@ -103,7 +161,7 @@ export default function Historico() {
 
   const loadHistory = async () => {
     const localItems = loadLocalVisits().map(localVisitToHistory);
-    const manualItems = loadManualHistory();
+    const manualItems = loadManualHistory().map(normalizeManualItem);
 
     try {
       const { data, error } = await supabase.from('visitas').select('*').order('visit_date', { ascending: false });
@@ -131,7 +189,23 @@ export default function Historico() {
     const term = query.trim().toLowerCase();
     if (!term) return items;
     return items.filter((item) =>
-      [item.date, item.type, item.title, item.description, item.origin].join(' ').toLowerCase().includes(term)
+      [
+        item.date,
+        item.type,
+        item.title,
+        item.unidade,
+        item.designacao,
+        item.bairro,
+        item.telefone,
+        item.diretor,
+        item.representante,
+        item.description,
+        item.conclusion,
+        item.origin
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(term)
     );
   }, [query, items]);
 
@@ -142,10 +216,18 @@ export default function Historico() {
       date: new Date().toISOString(),
       type: 'Registro manual',
       title: manualTitle,
+      unidade: 'Registro manual',
+      designacao: 'Nao informado',
+      bairro: 'Nao informado',
+      telefone: 'Nao informado',
+      diretor: 'Nao informado',
+      representante: 'Nao informado',
+      fotos: 0,
       description: manualDescription,
+      conclusion: 'Nao informado',
       origin: 'Dispositivo'
     };
-    const manualItems = [newItem, ...loadManualHistory()];
+    const manualItems = [newItem, ...loadManualHistory().map(normalizeManualItem)];
     saveManualHistory(manualItems);
     setManualTitle('');
     setManualDescription('');
@@ -171,13 +253,13 @@ export default function Historico() {
 
       <section className="page-card">
         <p className="page-description">
-          Consulte os registros das visitas, sincronizacoes e anotacoes importantes do GINFOTOS.
+          Consulte visitas, sincronizacoes e anotacoes importantes do GINFOTOS com dados completos da unidade escolar.
         </p>
 
         <div style={{ display: 'flex', gap: 12, margin: '18px 0', flexWrap: 'wrap' }}>
           <input
             aria-label="Buscar historico"
-            placeholder="Buscar por unidade, data, tipo, origem ou descricao"
+            placeholder="Buscar por unidade, designacao, bairro, telefone, diretor, data, tipo ou origem"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             style={{ flex: '1 1 260px' }}
@@ -218,9 +300,16 @@ export default function Historico() {
                 <tr>
                   <th>Data</th>
                   <th>Tipo</th>
-                  <th>Titulo</th>
+                  <th>Designacao</th>
+                  <th>Unidade</th>
+                  <th>Bairro</th>
+                  <th>Telefone</th>
+                  <th>Diretor(a)</th>
+                  <th>Representante</th>
+                  <th>Fotos</th>
                   <th>Origem</th>
                   <th>Descricao</th>
+                  <th>Conclusao</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,9 +317,16 @@ export default function Historico() {
                   <tr key={item.id}>
                     <td>{formatDate(item.date)}</td>
                     <td>{item.type}</td>
-                    <td>{item.title}</td>
+                    <td>{item.designacao}</td>
+                    <td>{item.unidade}</td>
+                    <td>{item.bairro}</td>
+                    <td>{item.telefone}</td>
+                    <td>{item.diretor}</td>
+                    <td>{item.representante}</td>
+                    <td>{item.fotos}</td>
                     <td><span className="status-chip">{item.origin}</span></td>
                     <td>{item.description}</td>
+                    <td>{item.conclusion}</td>
                   </tr>
                 ))}
               </tbody>
