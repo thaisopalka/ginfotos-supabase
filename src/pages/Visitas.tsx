@@ -152,7 +152,7 @@ export default function Visitas({ profile }: VisitasProps) {
         setMessage('Não foi possível carregar visitas do Supabase. Mostrando visitas salvas no dispositivo.');
         setVisitas(localVisits);
       } else {
-        const remoteVisits = (data || []).map((item) => fromSupabase(item as SupabaseVisita));
+        const remoteVisits = ((data || []) as SupabaseVisita[]).map((item: SupabaseVisita) => fromSupabase(item));
         const merged = [...localVisits, ...remoteVisits].filter(
           (item, index, array) => index === array.findIndex((candidate) => candidate.id === item.id)
         );
