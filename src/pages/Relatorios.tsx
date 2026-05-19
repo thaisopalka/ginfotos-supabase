@@ -17,6 +17,11 @@ interface LocalVisitRecord {
   designacao?: string | null;
   endereco?: string | null;
   bairro?: string | null;
+  telefone?: string | null;
+  diretor_geral?: string | null;
+  celular_diretor_geral?: string | null;
+  diretor_adjunto?: string | null;
+  celular_diretor_adjunto?: string | null;
   visit_date: string;
   tipo: string;
   representante: string;
@@ -37,6 +42,11 @@ interface ReportVisit {
   unidade: string;
   endereco: string;
   bairro: string;
+  telefone: string;
+  diretorGeral: string;
+  celularDiretorGeral: string;
+  diretorAdjunto: string;
+  celularDiretorAdjunto: string;
   tipo: string;
   representante: string;
   servicos: string;
@@ -78,20 +88,29 @@ function escapeHtml(value: string) {
     .replace(/\n/g, '<br />');
 }
 
+function valueOrDefault(value?: string | null) {
+  return value && value.trim() ? value : 'Nao informado';
+}
+
 function localToReport(item: LocalVisitRecord): ReportVisit {
   return {
     id: item.id,
     origem: 'local',
     data: item.visit_date,
-    designacao: item.designacao || item.unidade_id || 'Nao informado',
-    unidade: item.unidade_nome || 'Nao informado',
-    endereco: item.endereco || 'Nao informado',
-    bairro: item.bairro || 'Nao informado',
+    designacao: valueOrDefault(item.designacao || item.unidade_id),
+    unidade: valueOrDefault(item.unidade_nome),
+    endereco: valueOrDefault(item.endereco),
+    bairro: valueOrDefault(item.bairro),
+    telefone: valueOrDefault(item.telefone),
+    diretorGeral: valueOrDefault(item.diretor_geral),
+    celularDiretorGeral: valueOrDefault(item.celular_diretor_geral),
+    diretorAdjunto: valueOrDefault(item.diretor_adjunto),
+    celularDiretorAdjunto: valueOrDefault(item.celular_diretor_adjunto),
     tipo: item.tipo || 'VISTORIA TECNICA',
     representante: item.representante || 'ENGA. MARCIA BRAGA',
-    servicos: item.servicos || 'Nao informado',
-    observacoes: item.observacoes || 'Nao informado',
-    conclusao: item.conclusao || 'Nao informado',
+    servicos: valueOrDefault(item.servicos),
+    observacoes: valueOrDefault(item.observacoes),
+    conclusao: valueOrDefault(item.conclusao),
     fotos: item.fotos || []
   };
 }
@@ -101,15 +120,20 @@ function supabaseToReport(item: SupabaseVisita): ReportVisit {
     id: item.id,
     origem: 'supabase',
     data: item.visit_date || '',
-    designacao: item.unidade_id || 'Nao informado',
-    unidade: item.unidade_id || 'Unidade nao informada',
-    endereco: 'Nao informado',
-    bairro: 'Nao informado',
+    designacao: valueOrDefault(notesValue(item.notes, 'Designacao') || item.unidade_id),
+    unidade: valueOrDefault(notesValue(item.notes, 'Unidade escolar') || item.unidade_id),
+    endereco: valueOrDefault(notesValue(item.notes, 'Endereco')),
+    bairro: valueOrDefault(notesValue(item.notes, 'Bairro')),
+    telefone: valueOrDefault(notesValue(item.notes, 'Telefone')),
+    diretorGeral: valueOrDefault(notesValue(item.notes, 'Diretor geral') || notesValue(item.notes, 'Diretor(a) geral')),
+    celularDiretorGeral: valueOrDefault(notesValue(item.notes, 'Celular diretor') || notesValue(item.notes, 'Celular diretor(a)')),
+    diretorAdjunto: valueOrDefault(notesValue(item.notes, 'Diretor adjunto') || notesValue(item.notes, 'Diretor(a) adjunto(a)')),
+    celularDiretorAdjunto: valueOrDefault(notesValue(item.notes, 'Celular adjunto') || notesValue(item.notes, 'Celular adjunto(a)')),
     tipo: notesValue(item.notes, 'Tipo de visita/obra') || 'VISTORIA TECNICA',
     representante: item.visitor_name || notesValue(item.notes, 'Representante E/6 CRE/GIN') || 'ENGA. MARCIA BRAGA',
-    servicos: notesValue(item.notes, 'Servicos verificados') || item.notes || 'Nao informado',
-    observacoes: notesValue(item.notes, 'Observacoes') || 'Nao informado',
-    conclusao: notesValue(item.notes, 'Conclusao') || 'Nao informado',
+    servicos: valueOrDefault(notesValue(item.notes, 'Servicos verificados') || item.notes),
+    observacoes: valueOrDefault(notesValue(item.notes, 'Observacoes')),
+    conclusao: valueOrDefault(notesValue(item.notes, 'Conclusao')),
     fotos: []
   };
 }
@@ -120,9 +144,15 @@ function makeReportHtml(visit: ReportVisit) {
     ['Unidade Escolar', visit.unidade],
     ['Endereco', visit.endereco],
     ['Bairro', visit.bairro],
+    ['Telefone da Unidade', visit.telefone],
+    ['Diretor(a) Geral', visit.diretorGeral],
+    ['Celular Diretor(a) Geral', visit.celularDiretorGeral],
+    ['Diretor(a) Adjunto(a)', visit.diretorAdjunto],
+    ['Celular Diretor(a) Adjunto(a)', visit.celularDiretorAdjunto],
     ['Data da visita', formatDate(visit.data)],
     ['Tipo de visita/obra', visit.tipo],
-    ['Representante E/6 CRE/GIN', visit.representante]
+    ['Representante E/6 CRE/GIN', visit.representante],
+    ['Origem do registro', visit.origem === 'local' ? 'Dispositivo' : 'Supabase']
   ];
 
   const photoRows = visit.fotos.length
@@ -139,18 +169,21 @@ function makeReportHtml(visit: ReportVisit) {
 <style>
   body { font-family: Arial, sans-serif; color: #111827; margin: 36px; }
   .header { border-bottom: 4px solid #1f4e79; padding-bottom: 14px; margin-bottom: 24px; }
+  .org { text-align: center; color: #334155; font-size: 12px; line-height: 1.45; margin-bottom: 10px; }
   h1 { color: #1f4e79; font-size: 22px; margin: 0; text-align: center; }
   h2 { color: #1f4e79; font-size: 16px; margin-top: 24px; border-bottom: 1px solid #d1d5db; padding-bottom: 6px; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; }
   th, td { border: 1px solid #cbd5e1; padding: 8px; vertical-align: top; }
   th { background: #e8f0fa; text-align: left; }
-  .label { width: 26%; font-weight: bold; background: #f3f6fb; }
+  .label { width: 30%; font-weight: bold; background: #f3f6fb; }
+  .text-box { border: 1px solid #cbd5e1; padding: 12px; min-height: 48px; line-height: 1.5; }
   .footer { margin-top: 32px; text-align: center; color: #64748b; font-size: 12px; }
 </style>
 </head>
 <body>
   <div class="header">
-    <h1>RELATORIO DE VISITA TECNICA - E/6 CRE/GIN</h1>
+    <div class="org">PREFEITURA DA CIDADE DO RIO DE JANEIRO<br />SECRETARIA MUNICIPAL DE EDUCACAO<br />E/6 CRE/GIN</div>
+    <h1>RELATORIO DE VISITA TECNICA</h1>
   </div>
 
   <h2>Dados da Unidade e da Visita</h2>
@@ -161,17 +194,17 @@ function makeReportHtml(visit: ReportVisit) {
   </table>
 
   <h2>Servicos Verificados</h2>
-  <p>${escapeHtml(visit.servicos)}</p>
+  <div class="text-box">${escapeHtml(visit.servicos)}</div>
 
   <h2>Observacoes</h2>
-  <p>${escapeHtml(visit.observacoes)}</p>
+  <div class="text-box">${escapeHtml(visit.observacoes)}</div>
 
   <h2>Conclusao</h2>
-  <p>${escapeHtml(visit.conclusao)}</p>
+  <div class="text-box">${escapeHtml(visit.conclusao)}</div>
 
   <h2>Anexo Fotografico</h2>
   <table>
-    <thead><tr><th>Nº</th><th>Arquivo</th><th>Legenda</th></tr></thead>
+    <thead><tr><th>No</th><th>Arquivo</th><th>Legenda</th></tr></thead>
     <tbody>${photoRows}</tbody>
   </table>
 
@@ -228,7 +261,18 @@ export default function Relatorios() {
     const term = query.trim().toLowerCase();
     if (!term) return visitas;
     return visitas.filter((visit) =>
-      [visit.designacao, visit.unidade, visit.data, visit.tipo, visit.representante]
+      [
+        visit.designacao,
+        visit.unidade,
+        visit.endereco,
+        visit.bairro,
+        visit.telefone,
+        visit.diretorGeral,
+        visit.diretorAdjunto,
+        visit.data,
+        visit.tipo,
+        visit.representante
+      ]
         .join(' ')
         .toLowerCase()
         .includes(term)
@@ -247,12 +291,12 @@ export default function Relatorios() {
 
       <section className="page-card">
         <p className="page-description">
-          Gere relatorios editaveis, compativeis com Microsoft Word, a partir das visitas salvas no app.
+          Gere relatorios editaveis, compativeis com Microsoft Word, incluindo dados completos da unidade escolar e da direcao.
         </p>
         <div style={{ display: 'flex', gap: 12, margin: '18px 0', flexWrap: 'wrap' }}>
           <input
             aria-label="Buscar visita para relatorio"
-            placeholder="Buscar por designacao, unidade, data, tipo ou representante"
+            placeholder="Buscar por designacao, unidade, bairro, telefone, diretor, data ou representante"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             style={{ flex: '1 1 260px' }}
@@ -274,8 +318,10 @@ export default function Relatorios() {
                   <th>Data</th>
                   <th>Designacao</th>
                   <th>Unidade</th>
+                  <th>Bairro</th>
+                  <th>Telefone</th>
+                  <th>Diretor(a)</th>
                   <th>Tipo</th>
-                  <th>Representante</th>
                   <th>Fotos</th>
                   <th>Origem</th>
                   <th>Acao</th>
@@ -287,8 +333,10 @@ export default function Relatorios() {
                     <td>{formatDate(visit.data)}</td>
                     <td>{visit.designacao}</td>
                     <td>{visit.unidade}</td>
+                    <td>{visit.bairro}</td>
+                    <td>{visit.telefone}</td>
+                    <td>{visit.diretorGeral}</td>
                     <td>{visit.tipo}</td>
-                    <td>{visit.representante}</td>
                     <td>{visit.fotos.length}</td>
                     <td><span className="status-chip">{visit.origem === 'local' ? 'Dispositivo' : 'Supabase'}</span></td>
                     <td>
