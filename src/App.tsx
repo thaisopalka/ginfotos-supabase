@@ -13,6 +13,7 @@ import Admin from './pages/Admin';
 import Relatorios from './pages/Relatorios';
 import WhatsappDiretores from './pages/WhatsappDiretores';
 import Historico from './pages/Historico';
+import Perfil from './pages/Perfil';
 import NotFound from './pages/NotFound';
 
 export interface UserProfile {
@@ -35,108 +36,30 @@ function App() {
     setLoading(false);
   }, []);
 
-  const profile: UserProfile = user
-    ? {
-        id: user.email,
-        email: user.email,
-        name: user.name,
-        full_name: user.name,
-        role: user.role
-      }
-    : {};
+  const profile: UserProfile = user ? { id: user.email, email: user.email, name: user.name, full_name: user.name, role: user.role } : {};
 
   return (
     <div className={isLoginRoute ? 'public-shell' : 'app-shell'}>
-      {!isLoginRoute && (
-        <aside className="sidebar-shell">
-          <Sidebar isAdmin={user?.role === 'admin'} email={user?.email} name={user?.name} />
-        </aside>
-      )}
+      {!isLoginRoute && <aside className="sidebar-shell"><Sidebar isAdmin={user?.role === 'admin'} email={user?.email} name={user?.name} /></aside>}
       <main className={isLoginRoute ? 'login-main' : 'app-main'}>
-        {loading ? (
-          <div className="page-center">Carregando aplicação…</div>
-        ) : (
-          <>
-            <Routes>
-              <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard profile={profile} />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/unidades"
-                element={
-                  <ProtectedRoute>
-                    <Unidades />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/nova-visita"
-                element={
-                  <ProtectedRoute>
-                    <NovaVisita profile={profile} />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/visitas"
-                element={
-                  <ProtectedRoute>
-                    <Visitas profile={profile} />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/pastas"
-                element={
-                  <ProtectedRoute>
-                    <Pastas />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/relatorios"
-                element={
-                  <ProtectedRoute>
-                    <Relatorios />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/whatsapp-diretores"
-                element={
-                  <ProtectedRoute>
-                    <WhatsappDiretores />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/historico"
-                element={
-                  <ProtectedRoute>
-                    <Historico />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/admin"
-                element={
-                  <ProtectedRoute adminOnly>
-                    <Admin />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="/not-found" element={<NotFound />} />
-              <Route path="*" element={<Navigate to={location.pathname === '/login' ? '/login' : '/not-found'} replace />} />
-            </Routes>
-            {!isLoginRoute && <div className="page-footer">DESENVOLVIDO POR THAÍS OPALKA</div>}
-          </>
-        )}
+        {loading ? <div className="page-center">Carregando aplicação…</div> : <>
+          <Routes>
+            <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+            <Route path="/" element={<ProtectedRoute><Dashboard profile={profile} /></ProtectedRoute>} />
+            <Route path="/unidades" element={<ProtectedRoute><Unidades /></ProtectedRoute>} />
+            <Route path="/nova-visita" element={<ProtectedRoute><NovaVisita profile={profile} /></ProtectedRoute>} />
+            <Route path="/visitas" element={<ProtectedRoute><Visitas profile={profile} /></ProtectedRoute>} />
+            <Route path="/pastas" element={<ProtectedRoute><Pastas /></ProtectedRoute>} />
+            <Route path="/relatorios" element={<ProtectedRoute><Relatorios /></ProtectedRoute>} />
+            <Route path="/whatsapp-diretores" element={<ProtectedRoute><WhatsappDiretores /></ProtectedRoute>} />
+            <Route path="/historico" element={<ProtectedRoute><Historico /></ProtectedRoute>} />
+            <Route path="/perfil" element={<ProtectedRoute><Perfil user={user} onUserChange={setUser} /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
+            <Route path="/not-found" element={<NotFound />} />
+            <Route path="*" element={<Navigate to={location.pathname === '/login' ? '/login' : '/not-found'} replace />} />
+          </Routes>
+          {!isLoginRoute && <div className="page-footer">DESENVOLVIDO POR THAÍS OPALKA</div>}
+        </>}
       </main>
     </div>
   );
