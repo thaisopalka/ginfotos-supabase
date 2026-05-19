@@ -18,6 +18,7 @@ import {
   VerticalAlign,
   WidthType
 } from 'docx';
+import { LOGO_PREFEITURA_RIO } from '../assets/logoPrefeituraRio';
 
 export interface WordReportPhoto {
   name: string;
@@ -41,8 +42,13 @@ export interface WordReportVisit {
 
 const BLUE = '1F5795';
 const LIGHT_BLUE = 'E8F0FA';
-const BORDER = '8EA8C7';
+const BORDER = '111827';
+const SOFT_BORDER = '8EA8C7';
 const FONT = 'Calibri';
+const PHOTO_FRAME_WIDTH = 1280;
+const PHOTO_FRAME_HEIGHT = 890;
+const PHOTO_WORD_WIDTH = 345;
+const PHOTO_WORD_HEIGHT = 240;
 
 function clean(value?: string | null) {
   return value && value.trim() ? value.trim() : 'Não informado';
@@ -72,37 +78,33 @@ function dataUrlToUint8Array(dataUrl: string) {
   return bytes;
 }
 
-function getImageType(dataUrl: string): 'jpg' | 'png' | 'gif' | 'bmp' {
-  if (dataUrl.includes('image/png')) return 'png';
-  if (dataUrl.includes('image/gif')) return 'gif';
-  if (dataUrl.includes('image/bmp')) return 'bmp';
-  return 'jpg';
-}
-
-async function getFittedImageSize(dataUrl: string, maxWidth = 350, maxHeight = 270) {
-  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Imagem inválida'));
-    img.src = dataUrl;
-  });
-  const scale = Math.min(maxWidth / image.width, maxHeight / image.height);
-  return { width: Math.max(1, Math.round(image.width * scale)), height: Math.max(1, Math.round(image.height * scale)) };
-}
-
 function text(value: string, options: { bold?: boolean; size?: number; color?: string } = {}) {
   return new TextRun({ text: value, font: FONT, bold: options.bold, size: options.size ?? 22, color: options.color ?? '111827' });
 }
 
 const noBorders = {
-  top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE }
+  top: { style: BorderStyle.NONE },
+  bottom: { style: BorderStyle.NONE },
+  left: { style: BorderStyle.NONE },
+  right: { style: BorderStyle.NONE },
+  insideHorizontal: { style: BorderStyle.NONE },
+  insideVertical: { style: BorderStyle.NONE }
+};
+
+const tableBorders = {
+  top: { style: BorderStyle.SINGLE, color: BORDER, size: 8 },
+  bottom: { style: BorderStyle.SINGLE, color: BORDER, size: 8 },
+  left: { style: BorderStyle.SINGLE, color: BORDER, size: 8 },
+  right: { style: BorderStyle.SINGLE, color: BORDER, size: 8 },
+  insideHorizontal: { style: BorderStyle.SINGLE, color: BORDER, size: 8 },
+  insideVertical: { style: BorderStyle.SINGLE, color: BORDER, size: 8 }
 };
 
 function heading(value: string) {
   return new Paragraph({
     spacing: { before: 170, after: 65 },
     children: [text(value, { bold: true, size: 25, color: BLUE })],
-    border: { bottom: { style: BorderStyle.SINGLE, color: BORDER, size: 8 } }
+    border: { bottom: { style: BorderStyle.SINGLE, color: SOFT_BORDER, size: 8 } }
   });
 }
 
@@ -117,15 +119,27 @@ function infoRow(label: string, value: string) {
   ] });
 }
 
+function logoCellParagraph() {
+  if (!LOGO_PREFEITURA_RIO) {
+    return new Paragraph({ alignment: AlignmentType.LEFT, children: [text('PREFEITURA RIO | Educação', { bold: true, size: 20, color: BLUE })] });
+  }
+
+  return new Paragraph({
+    alignment: AlignmentType.LEFT,
+    children: [new ImageRun({
+      data: dataUrlToUint8Array(LOGO_PREFEITURA_RIO),
+      transformation: { width: 190, height: 60 },
+      type: 'png'
+    })]
+  });
+}
+
 function pageHeader() {
   return new Header({ children: [
     new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: noBorders, rows: [
       new TableRow({ children: [
-        new TableCell({ width: { size: 34, type: WidthType.PERCENTAGE }, shading: { type: ShadingType.CLEAR, fill: BLUE }, verticalAlign: VerticalAlign.CENTER, margins: { top: 80, bottom: 80, left: 120, right: 120 }, children: [
-          new Paragraph({ alignment: AlignmentType.LEFT, children: [text('P R E F E I T U R A', { bold: true, size: 15, color: 'FFFFFF' })] }),
-          new Paragraph({ alignment: AlignmentType.LEFT, children: [text('RIO', { bold: true, size: 35, color: 'FFFFFF' }), text('  Educação', { size: 18, color: 'FFFFFF' })] })
-        ] }),
-        new TableCell({ width: { size: 66, type: WidthType.PERCENTAGE }, verticalAlign: VerticalAlign.CENTER, margins: { top: 80, bottom: 80, left: 140, right: 80 }, children: [
+        new TableCell({ width: { size: 34, type: WidthType.PERCENTAGE }, verticalAlign: VerticalAlign.CENTER, margins: { top: 55, bottom: 55, left: 70, right: 120 }, children: [logoCellParagraph()] }),
+        new TableCell({ width: { size: 66, type: WidthType.PERCENTAGE }, verticalAlign: VerticalAlign.CENTER, margins: { top: 55, bottom: 55, left: 140, right: 70 }, children: [
           new Paragraph({ alignment: AlignmentType.CENTER, children: [text('SECRETARIA MUNICIPAL DE EDUCAÇÃO', { bold: true, size: 20, color: '111827' })] }),
           new Paragraph({ alignment: AlignmentType.CENTER, children: [text('6ª COORDENADORIA REGIONAL DE EDUCAÇÃO', { bold: true, size: 20, color: '111827' })] }),
           new Paragraph({ alignment: AlignmentType.CENTER, children: [text('E/6ª CRE/GIN', { bold: true, size: 20, color: '111827' })] })
@@ -139,36 +153,84 @@ function pageFooter() {
   return new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Página ', { size: 18, color: '64748B' }), new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 18, color: '64748B' }), text(' de ', { size: 18, color: '64748B' }), new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: 18, color: '64748B' })] })] });
 }
 
+async function makeStandardPhotoDataUrl(dataUrl: string) {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Imagem inválida'));
+    img.src = dataUrl;
+  });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = PHOTO_FRAME_WIDTH;
+  canvas.height = PHOTO_FRAME_HEIGHT;
+  const context = canvas.getContext('2d');
+  if (!context) return dataUrl;
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, PHOTO_FRAME_WIDTH, PHOTO_FRAME_HEIGHT);
+
+  const scale = Math.min(PHOTO_FRAME_WIDTH / image.width, PHOTO_FRAME_HEIGHT / image.height);
+  const width = Math.round(image.width * scale);
+  const height = Math.round(image.height * scale);
+  const x = Math.round((PHOTO_FRAME_WIDTH - width) / 2);
+  const y = Math.round((PHOTO_FRAME_HEIGHT - height) / 2);
+  context.drawImage(image, x, y, width, height);
+  return canvas.toDataURL('image/jpeg', 0.9);
+}
+
 async function photoCell(photo?: WordReportPhoto) {
   const children: Paragraph[] = [];
+
   if (photo?.dataUrl) {
     try {
-      const size = await getFittedImageSize(photo.dataUrl);
-      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data: dataUrlToUint8Array(photo.dataUrl), transformation: size, type: getImageType(photo.dataUrl) })] }));
-    } catch { children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não carregada', { color: '64748B' })] })); }
+      const standardized = await makeStandardPhotoDataUrl(photo.dataUrl);
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new ImageRun({ data: dataUrlToUint8Array(standardized), transformation: { width: PHOTO_WORD_WIDTH, height: PHOTO_WORD_HEIGHT }, type: 'jpg' })]
+      }));
+    } catch {
+      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não carregada', { color: '64748B' })] }));
+    }
   } else {
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não incorporada', { color: '64748B' })] }));
   }
-  children.push(new Paragraph({ spacing: { before: 50 }, alignment: AlignmentType.LEFT, children: [text(clean(photo?.caption || 'Sem legenda.'), { size: 20 })] }));
-  return new TableCell({ width: { size: 50, type: WidthType.PERCENTAGE }, verticalAlign: VerticalAlign.TOP, margins: { top: 65, bottom: 65, left: 65, right: 65 }, children });
+
+  children.push(new Paragraph({ spacing: { before: 55 }, alignment: AlignmentType.LEFT, children: [text(clean(photo?.caption || 'Sem legenda.'), { bold: true, size: 20 })] }));
+
+  return new TableCell({
+    width: { size: 50, type: WidthType.PERCENTAGE },
+    verticalAlign: VerticalAlign.TOP,
+    margins: { top: 70, bottom: 70, left: 70, right: 70 },
+    children
+  });
 }
 
-async function photoRows(fotos: WordReportPhoto[]) {
-  if (fotos.length === 0) return [new TableRow({ children: [new TableCell({ columnSpan: 2, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Nenhuma foto incorporada neste relatório.', { color: '64748B' })] })] })] })];
-  const rows: TableRow[] = [];
-  for (let index = 0; index < fotos.length; index += 2) rows.push(new TableRow({ cantSplit: true, children: [await photoCell(fotos[index]), await photoCell(fotos[index + 1])] }));
-  return rows;
+async function photoPairTable(left?: WordReportPhoto, right?: WordReportPhoto) {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: tableBorders,
+    rows: [new TableRow({ cantSplit: true, children: [await photoCell(left), await photoCell(right)] })]
+  });
 }
 
 async function photoSectionElements(fotos: WordReportPhoto[]) {
   const chunks: WordReportPhoto[][] = [];
   for (let index = 0; index < fotos.length; index += 4) chunks.push(fotos.slice(index, index + 4));
   if (chunks.length === 0) chunks.push([]);
+
   const elements: Array<Paragraph | Table> = [];
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    const chunk = chunks[chunkIndex];
     if (chunkIndex > 0) elements.push(new Paragraph({ children: [new PageBreak()] }));
-    elements.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 70 }, children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 28, color: BLUE })] }));
-    elements.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: await photoRows(chunks[chunkIndex]) }));
+
+    elements.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 105 }, children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 28, color: BLUE })] }));
+    elements.push(await photoPairTable(chunk[0], chunk[1]));
+
+    if (chunk.length > 2) {
+      elements.push(new Paragraph({ spacing: { after: 260 }, children: [text('', { size: 2 })] }));
+      elements.push(await photoPairTable(chunk[2], chunk[3]));
+    }
   }
   return elements;
 }
@@ -181,11 +243,20 @@ export async function downloadWordReport(visit: WordReportVisit) {
     infoRow('Diretor(a) Geral', clean(visit.diretorGeral)),
     infoRow('Representante E/GIN/6ª CRE', 'Engenheira Márcia Braga.')
   ] });
-  const doc = new Document({ sections: [{ properties: { page: { size: { orientation: PageOrientation.PORTRAIT, width: 11906, height: 16838 }, margin: { top: 760, right: 560, bottom: 780, left: 560 } } }, headers: { default: pageHeader() }, footers: { default: pageFooter() }, children: [
-    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 120, after: 230 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
-    infoTable,
-    heading('Serviços Verificados'), paragraph(visit.servicos), heading('Observações'), paragraph(visit.observacoes), heading('Conclusão'), paragraph(visit.conclusao), new Paragraph({ children: [new PageBreak()] }), ...(await photoSectionElements(visit.fotos))
-  ] }] });
+
+  const doc = new Document({ sections: [{
+    properties: { page: { size: { orientation: PageOrientation.PORTRAIT, width: 11906, height: 16838 }, margin: { top: 700, right: 500, bottom: 730, left: 500 } } },
+    headers: { default: pageHeader() },
+    footers: { default: pageFooter() },
+    children: [
+      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 110, after: 225 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
+      infoTable,
+      heading('Serviços Verificados'), paragraph(visit.servicos), heading('Observações'), paragraph(visit.observacoes), heading('Conclusão'), paragraph(visit.conclusao),
+      new Paragraph({ children: [new PageBreak()] }),
+      ...(await photoSectionElements(visit.fotos))
+    ]
+  }] });
+
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
   const fileName = `RELATORIO_${clean(visit.designacao)}_${formatDate(visit.data).replace(/\//g, '-')}.docx`.replace(/[^a-zA-Z0-9_.-]/g, '_');
