@@ -8,6 +8,12 @@ interface UnidadeOption {
   address?: string | null;
   designacao?: string | null;
   bairro?: string | null;
+  telefone?: string | null;
+  diretor_geral?: string | null;
+  celular_diretor_geral?: string | null;
+  diretor_adjunto?: string | null;
+  celular_diretor_adjunto?: string | null;
+  origem?: string;
 }
 
 interface NovaVisitaProps {
@@ -28,6 +34,11 @@ interface LocalVisitRecord {
   designacao?: string | null;
   endereco?: string | null;
   bairro?: string | null;
+  telefone?: string | null;
+  diretor_geral?: string | null;
+  celular_diretor_geral?: string | null;
+  diretor_adjunto?: string | null;
+  celular_diretor_adjunto?: string | null;
   visit_date: string;
   tipo: string;
   representante: string;
@@ -41,44 +52,66 @@ interface LocalVisitRecord {
 }
 
 const fallbackUnidades: UnidadeOption[] = [
-  {
-    id: '06-22-204',
-    designacao: '06.22.204',
-    name: 'GET JOÃO DO RIO',
-    address: '',
-    bairro: ''
-  },
-  {
-    id: '06-22-001',
-    designacao: '06.22.001',
-    name: 'EM GUILHERME TELL',
-    address: '',
-    bairro: ''
-  },
-  {
-    id: '06-25-000',
-    designacao: '06.25.000',
-    name: 'EM ALZIRO ZARUR',
-    address: '',
-    bairro: ''
-  }
+  { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', origem: 'Base provisoria' },
+  { id: '06-22-001', designacao: '06.22.001', name: 'EM GUILHERME TELL', address: '', bairro: '', origem: 'Base provisoria' },
+  { id: '06-25-000', designacao: '06.25.000', name: 'EM ALZIRO ZARUR', address: '', bairro: '', origem: 'Base provisoria' }
 ];
 
-const visitTypes = ['VISTORIA TÉCNICA', 'INAUGURAÇÃO DE GET', 'VISTORIA GET', 'OBRA', 'OUTROS'];
+const visitTypes = ['VISTORIA TECNICA', 'INAUGURACAO DE GET', 'VISTORIA GET', 'OBRA', 'OUTROS'];
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
+const LOCAL_UNIDADES_KEY = 'ginfotos_unidades_local';
+
+function loadLocalArray<T>(key: string): T[] {
+  try {
+    return JSON.parse(localStorage.getItem(key) || '[]') as T[];
+  } catch {
+    return [];
+  }
+}
 
 function saveLocalVisit(record: LocalVisitRecord) {
-  const existing = JSON.parse(localStorage.getItem(LOCAL_VISITS_KEY) || '[]') as LocalVisitRecord[];
+  const existing = loadLocalArray<LocalVisitRecord>(LOCAL_VISITS_KEY);
   const filtered = existing.filter((item) => item.id !== record.id);
   localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify([record, ...filtered]));
+}
+
+function normalizeUnidade(item: Partial<UnidadeOption>): UnidadeOption {
+  return {
+    id: item.id || `local-${Date.now()}-${Math.random()}`,
+    name: item.name || 'Unidade sem nome',
+    address: item.address || '',
+    designacao: item.designacao || '',
+    bairro: item.bairro || '',
+    telefone: item.telefone || '',
+    diretor_geral: item.diretor_geral || '',
+    celular_diretor_geral: item.celular_diretor_geral || '',
+    diretor_adjunto: item.diretor_adjunto || '',
+    celular_diretor_adjunto: item.celular_diretor_adjunto || '',
+    origem: item.origem || 'Local'
+  };
+}
+
+function mergeUnidades(...groups: UnidadeOption[][]) {
+  const map = new Map<string, UnidadeOption>();
+  groups.flat().forEach((item) => {
+    const normalized = normalizeUnidade(item);
+    const key = (normalized.designacao || normalized.id || normalized.name).toLowerCase();
+    if (!map.has(key)) map.set(key, normalized);
+  });
+  return Array.from(map.values()).sort((a, b) => (a.designacao || a.name).localeCompare(b.designacao || b.name));
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 export default function NovaVisita({ profile }: NovaVisitaProps) {
   const [unidades, setUnidades] = useState<UnidadeOption[]>(fallbackUnidades);
   const [unidadeId, setUnidadeId] = useState(fallbackUnidades[0].id);
-  const [visitDate, setVisitDate] = useState(new Date().toISOString().slice(0, 10));
+  const [unidadeQuery, setUnidadeQuery] = useState('');
+  const [visitDate, setVisitDate] = useState(todayDate());
   const [tipo, setTipo] = useState(visitTypes[0]);
-  const [representante, setRepresentante] = useState('ENGª. MÁRCIA BRAGA');
+  const [representante, setRepresentante] = useState('ENGA. MARCIA BRAGA');
   const [servicos, setServicos] = useState('');
   const [observacoes, setObservacoes] = useState('');
   const [conclusao, setConclusao] = useState('');
@@ -90,24 +123,45 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   useEffect(() => {
     async function loadUnidades() {
-      const { data, error } = await supabase
-        .from('unidades')
-        .select('id, name, address, designacao, bairro')
-        .order('name');
+      const localUnits = loadLocalArray<UnidadeOption>(LOCAL_UNIDADES_KEY).map((item) => ({ ...item, origem: item.origem || 'Local' }));
+      const initialUnits = mergeUnidades(localUnits, fallbackUnidades);
+      setUnidades(initialUnits);
+      setUnidadeId((current) => current || initialUnits[0]?.id || '');
 
-      if (!error && data && data.length > 0) {
-        const loaded = data as UnidadeOption[];
-        setUnidades(loaded);
-        setUnidadeId(loaded[0].id);
+      try {
+        const { data, error } = await supabase
+          .from('unidades')
+          .select('id, name, address, designacao, bairro, telefone, diretor_geral, celular_diretor_geral, diretor_adjunto, celular_diretor_adjunto')
+          .order('name');
+
+        if (!error && data && data.length > 0) {
+          const loaded = (data as UnidadeOption[]).map((item) => ({ ...item, origem: 'Supabase' }));
+          const merged = mergeUnidades(localUnits, loaded, fallbackUnidades);
+          setUnidades(merged);
+          setUnidadeId((current) => (merged.some((item) => item.id === current) ? current : merged[0]?.id || ''));
+        }
+      } catch {
+        setMessage('Base do Supabase nao carregou. A lista local/provisoria continua disponivel.');
       }
     }
 
     loadUnidades();
   }, []);
 
+  const filteredUnidades = useMemo(() => {
+    const term = unidadeQuery.trim().toLowerCase();
+    if (!term) return unidades;
+    return unidades.filter((item) =>
+      [item.designacao, item.name, item.address, item.bairro, item.telefone, item.diretor_geral, item.diretor_adjunto]
+        .join(' ')
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [unidadeQuery, unidades]);
+
   const selectedUnidade = useMemo(
-    () => unidades.find((item) => item.id === unidadeId) || unidades[0],
-    [unidadeId, unidades]
+    () => unidades.find((item) => item.id === unidadeId) || filteredUnidades[0] || unidades[0],
+    [unidadeId, unidades, filteredUnidades]
   );
 
   const addFiles = (files: FileList | null) => {
@@ -154,6 +208,16 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     }
   };
 
+  const resetFormAfterSave = () => {
+    photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+    setPhotos([]);
+    setServicos('');
+    setObservacoes('');
+    setConclusao('');
+    setVisitDate(todayDate());
+    setTipo(visitTypes[0]);
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -167,10 +231,14 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
     const notes = [
       `Tipo de visita/obra: ${tipo}`,
-      `Representante E/6ª CRE/GIN: ${representante}`,
-      `Serviços verificados: ${servicos || 'Não informado'}`,
-      `Observações: ${observacoes || 'Não informado'}`,
-      `Conclusão: ${conclusao || 'Não informado'}`
+      `Representante E/6 CRE/GIN: ${representante}`,
+      `Servicos verificados: ${servicos || 'Nao informado'}`,
+      `Observacoes: ${observacoes || 'Nao informado'}`,
+      `Conclusao: ${conclusao || 'Nao informado'}`,
+      `Unidade escolar: ${selectedUnidade.name}`,
+      `Designacao: ${selectedUnidade.designacao || 'Nao informado'}`,
+      `Endereco: ${selectedUnidade.address || 'Nao informado'}`,
+      `Bairro: ${selectedUnidade.bairro || 'Nao informado'}`
     ].join('\n');
 
     const localId = `local-${Date.now()}`;
@@ -208,6 +276,11 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       designacao: selectedUnidade.designacao,
       endereco: selectedUnidade.address,
       bairro: selectedUnidade.bairro,
+      telefone: selectedUnidade.telefone,
+      diretor_geral: selectedUnidade.diretor_geral,
+      celular_diretor_geral: selectedUnidade.celular_diretor_geral,
+      diretor_adjunto: selectedUnidade.diretor_adjunto,
+      celular_diretor_adjunto: selectedUnidade.celular_diretor_adjunto,
       visit_date: visitDate,
       tipo,
       representante,
@@ -222,9 +295,10 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
     setMessage(
       savedInSupabase
-        ? 'Visita salva com sucesso. As fotos foram vinculadas à visita.'
-        : 'Visita salva no dispositivo. O Supabase não respondeu, mas os dados principais não foram perdidos.'
+        ? 'Visita salva com sucesso. As fotos foram vinculadas e o registro tambem ficou disponivel localmente.'
+        : 'Visita salva no dispositivo. O Supabase nao respondeu, mas os dados principais nao foram perdidos.'
     );
+    resetFormAfterSave();
     setSaving(false);
   };
 
@@ -232,16 +306,26 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     <div className="dashboard-page">
       <div className="page-card">
         <p className="page-label">Nova Visita</p>
-        <h1 className="page-title">Nova Visita Técnica</h1>
+        <h1 className="page-title">Nova Visita Tecnica</h1>
         <p className="page-description">
-          Registre a vistoria, selecione a unidade escolar, descreva os serviços verificados e anexe fotos da visita.
+          Registre a vistoria, selecione a unidade escolar, descreva os servicos verificados e anexe fotos da visita.
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
           <div className="field">
+            <label htmlFor="busca-unidade">Buscar unidade escolar</label>
+            <input
+              id="busca-unidade"
+              value={unidadeQuery}
+              onChange={(event) => setUnidadeQuery(event.target.value)}
+              placeholder="Buscar por designacao, unidade, bairro, endereco ou diretor"
+            />
+          </div>
+
+          <div className="field">
             <label htmlFor="unidade">Unidade Escolar</label>
             <select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>
-              {unidades.map((item) => (
+              {filteredUnidades.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.designacao ? `${item.designacao} - ${item.name}` : item.name}
                 </option>
@@ -251,9 +335,12 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
           {selectedUnidade && (
             <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}>
-              <strong>{selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong>
-              <p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p>
-              <p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p>
+              <strong>{selectedUnidade.designacao || 'Designacao nao informada'} - {selectedUnidade.name}</strong>
+              <p className="page-description">Endereco: {selectedUnidade.address || 'Nao informado'}</p>
+              <p className="page-description">Bairro: {selectedUnidade.bairro || 'Nao informado'}</p>
+              <p className="page-description">Telefone: {selectedUnidade.telefone || 'Nao informado'}</p>
+              <p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Nao informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p>
+              <p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p>
             </div>
           )}
 
@@ -274,22 +361,22 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
           </div>
 
           <div className="field">
-            <label htmlFor="representante">Representante E/6ª CRE/GIN</label>
+            <label htmlFor="representante">Representante E/6 CRE/GIN</label>
             <input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required />
           </div>
 
           <div className="field">
-            <label htmlFor="servicos">Serviços Verificados</label>
-            <textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." />
+            <label htmlFor="servicos">Servicos Verificados</label>
+            <textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, servicos e necessidades verificadas." />
           </div>
 
           <div className="field">
-            <label htmlFor="observacoes">Observações</label>
+            <label htmlFor="observacoes">Observacoes</label>
             <textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} />
           </div>
 
           <div className="field">
-            <label htmlFor="conclusao">Conclusão</label>
+            <label htmlFor="conclusao">Conclusao</label>
             <textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} />
           </div>
 
@@ -303,6 +390,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
               <button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>
                 ANEXAR FOTOS
               </button>
+              <span className="status-pill">{photos.length} foto(s)</span>
             </div>
             <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} />
             <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />
