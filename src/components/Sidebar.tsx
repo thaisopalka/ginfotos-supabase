@@ -19,6 +19,7 @@ const navItems = [
 ];
 
 export default function Sidebar({ isAdmin, email, name }: SidebarProps) {
+  const displayName = isAdmin ? 'Thaís Opalka' : (name ?? 'Usuário');
   const handleSignOut = () => {
     clearCurrentUser();
     window.location.assign('/login');
@@ -67,10 +68,10 @@ export default function Sidebar({ isAdmin, email, name }: SidebarProps) {
 
       <div>
         <div className="sidebar-user-card">
-          <div className="user-avatar">{name ? name.charAt(0) : 'A'}</div>
+          <div className="user-avatar">{displayName.charAt(0)}</div>
           <div className="user-details">
-            <p className="user-name">{name ?? 'Usuário'}</p>
-            <p className="user-role">ADMIN</p>
+            <p className="user-name">{displayName}</p>
+            <p className="user-role">{isAdmin ? 'ADMIN' : 'USUÁRIO'}</p>
           </div>
         </div>
 
