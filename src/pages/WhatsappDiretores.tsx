@@ -131,13 +131,18 @@ function normalizeBrazilPhone(value: string) {
   return digits;
 }
 
+function replaceToken(text: string, token: string, value: string) {
+  return text.split(token).join(value);
+}
+
 function buildMessage(template: string, unidade: UnidadeDiretor, pessoa: string) {
-  return template
-    .replaceAll('{designacao}', getDesignacao(unidade) || 'sem designacao')
-    .replaceAll('{unidade}', getNome(unidade))
-    .replaceAll('{bairro}', getBairro(unidade) || 'bairro nao informado')
-    .replaceAll('{endereco}', getEndereco(unidade))
-    .replaceAll('{diretor}', pessoa || 'Direcao');
+  let output = template;
+  output = replaceToken(output, '{designacao}', getDesignacao(unidade) || 'sem designacao');
+  output = replaceToken(output, '{unidade}', getNome(unidade));
+  output = replaceToken(output, '{bairro}', getBairro(unidade) || 'bairro nao informado');
+  output = replaceToken(output, '{endereco}', getEndereco(unidade));
+  output = replaceToken(output, '{diretor}', pessoa || 'Direcao');
+  return output;
 }
 
 function openWhatsapp(phone: string, message: string) {
