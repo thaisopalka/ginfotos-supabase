@@ -1,65 +1,33 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { fetchSupabaseUnidades, loadLocalUnidades, mergeUnidades, UnidadeApp } from '../lib/unidadesSource';
 
-interface UnidadeDiretor {
-  id: string;
-  name?: string | null;
+interface UnidadeDiretor extends UnidadeApp {
   nome?: string | null;
   unidade?: string | null;
-  address?: string | null;
   endereco?: string | null;
-  designacao?: string | null;
-  bairro?: string | null;
-  telefone?: string | null;
-  diretor_geral?: string | null;
   diretorGeral?: string | null;
-  celular_diretor_geral?: string | null;
   celularDiretorGeral?: string | null;
-  diretor_adjunto?: string | null;
   diretorAdjunto?: string | null;
-  celular_diretor_adjunto?: string | null;
   celularDiretorAdjunto?: string | null;
-  origem?: string;
-  [key: string]: unknown;
 }
 
-const LOCAL_UNIDADES_KEY = 'ginfotos_unidades_local';
-
 const fallbackUnidades: UnidadeDiretor[] = [
-  { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', origem: 'Base provisoria' },
-  { id: '06-22-001', designacao: '06.22.001', name: 'EM GUILHERME TELL', address: '', bairro: '', origem: 'Base provisoria' },
-  { id: '06-25-000', designacao: '06.25.000', name: 'EM ALZIRO ZARUR', address: '', bairro: '', origem: 'Base provisoria' }
+  { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', telefone: '', diretor_geral: '', celular_diretor_geral: '', diretor_adjunto: '', celular_diretor_adjunto: '', origem: 'Base provisoria' },
+  { id: '06-22-001', designacao: '06.22.001', name: 'EM GUILHERME TELL', address: '', bairro: '', telefone: '', diretor_geral: '', celular_diretor_geral: '', diretor_adjunto: '', celular_diretor_adjunto: '', origem: 'Base provisoria' },
+  { id: '06-25-000', designacao: '06.25.000', name: 'EM ALZIRO ZARUR', address: '', bairro: '', telefone: '', diretor_geral: '', celular_diretor_geral: '', diretor_adjunto: '', celular_diretor_adjunto: '', origem: 'Base provisoria' }
 ];
 
 const defaultMessage = 'Prezada Direcao, boa tarde. Entramos em contato pela E/6 CRE/GIN sobre a unidade {designacao} - {unidade}. Poderia nos retornar, por gentileza?';
 
-function loadLocalUnidades(): UnidadeDiretor[] {
-  try { return JSON.parse(localStorage.getItem(LOCAL_UNIDADES_KEY) || '[]') as UnidadeDiretor[]; } catch { return []; }
-}
-function textValue(value: unknown) { return typeof value === 'string' ? value : ''; }
-function getNome(unidade: UnidadeDiretor) { return unidade.name || unidade.nome || unidade.unidade || textValue(unidade['UNIDADE ESCOLAR']) || 'Unidade sem nome'; }
-function getEndereco(unidade: UnidadeDiretor) { return unidade.address || unidade.endereco || textValue(unidade['ENDERECO']) || textValue(unidade['ENDEREÇO']) || 'Endereco nao informado'; }
-function getDesignacao(unidade: UnidadeDiretor) { return unidade.designacao || textValue(unidade['DESIGNACAO']) || textValue(unidade['DESIGNAÇÃO']) || ''; }
-function getBairro(unidade: UnidadeDiretor) { return unidade.bairro || textValue(unidade['BAIRRO']) || ''; }
-function getTelefone(unidade: UnidadeDiretor) { return unidade.telefone || textValue(unidade['TELEFONE']) || ''; }
-function getDiretorGeral(unidade: UnidadeDiretor) { return unidade.diretorGeral || unidade.diretor_geral || textValue(unidade['DIRETOR(A) GERAL']) || textValue(unidade['DIRETOR GERAL']) || ''; }
-function getCelularDiretorGeral(unidade: UnidadeDiretor) { return unidade.celularDiretorGeral || unidade.celular_diretor_geral || textValue(unidade['CELULAR DIRETOR(A)']) || textValue(unidade['CELULAR DIRETOR']) || ''; }
-function getDiretorAdjunto(unidade: UnidadeDiretor) { return unidade.diretorAdjunto || unidade.diretor_adjunto || textValue(unidade['DIRETOR(A) ADJUNTO(A)']) || textValue(unidade['DIRETOR ADJUNTO']) || ''; }
-function getCelularDiretorAdjunto(unidade: UnidadeDiretor) { return unidade.celularDiretorAdjunto || unidade.celular_diretor_adjunto || textValue(unidade['CELULAR ADJUNTO(A)']) || textValue(unidade['CELULAR ADJUNTO']) || ''; }
-
-function normalizeUnidade(unidade: UnidadeDiretor): UnidadeDiretor {
-  return { ...unidade, id: unidade.id || `local-${getDesignacao(unidade) || getNome(unidade)}`, name: getNome(unidade), address: getEndereco(unidade), designacao: getDesignacao(unidade), bairro: getBairro(unidade), telefone: getTelefone(unidade), diretor_geral: getDiretorGeral(unidade), celular_diretor_geral: getCelularDiretorGeral(unidade), diretor_adjunto: getDiretorAdjunto(unidade), celular_diretor_adjunto: getCelularDiretorAdjunto(unidade), origem: unidade.origem || 'Local' };
-}
-
-function mergeUnidades(...groups: UnidadeDiretor[][]) {
-  const map = new Map<string, UnidadeDiretor>();
-  groups.flat().forEach((item) => {
-    const normalized = normalizeUnidade(item);
-    const key = (normalized.designacao || normalized.id || getNome(normalized)).toLowerCase();
-    if (!map.has(key)) map.set(key, normalized);
-  });
-  return Array.from(map.values()).sort((a, b) => (getDesignacao(a) || getNome(a)).localeCompare(getDesignacao(b) || getNome(b)));
-}
+function getNome(unidade: UnidadeDiretor) { return unidade.name || unidade.nome || unidade.unidade || 'Unidade sem nome'; }
+function getEndereco(unidade: UnidadeDiretor) { return unidade.address || unidade.endereco || 'Endereco nao informado'; }
+function getDesignacao(unidade: UnidadeDiretor) { return unidade.designacao || ''; }
+function getBairro(unidade: UnidadeDiretor) { return unidade.bairro || ''; }
+function getTelefone(unidade: UnidadeDiretor) { return unidade.telefone || ''; }
+function getDiretorGeral(unidade: UnidadeDiretor) { return unidade.diretorGeral || unidade.diretor_geral || ''; }
+function getCelularDiretorGeral(unidade: UnidadeDiretor) { return unidade.celularDiretorGeral || unidade.celular_diretor_geral || ''; }
+function getDiretorAdjunto(unidade: UnidadeDiretor) { return unidade.diretorAdjunto || unidade.diretor_adjunto || ''; }
+function getCelularDiretorAdjunto(unidade: UnidadeDiretor) { return unidade.celularDiretorAdjunto || unidade.celular_diretor_adjunto || ''; }
 
 function normalizeBrazilPhone(value: string) {
   let digits = value.replace(/\D/g, '');
@@ -96,13 +64,15 @@ export default function WhatsappDiretores() {
 
   useEffect(() => {
     async function loadUnidades() {
-      const local = loadLocalUnidades().map((item) => ({ ...item, origem: item.origem || 'Local' }));
-      setUnidades(mergeUnidades(local, fallbackUnidades));
-      try {
-        const { data, error } = await supabase.from('unidades').select('*').order('name');
-        if (!error && data && data.length > 0) setUnidades(mergeUnidades(local, (data as UnidadeDiretor[]).map((item) => ({ ...item, origem: 'Supabase' })), fallbackUnidades));
-        else if (error) setNotice('Base do Supabase nao carregou. Mostrando unidades locais/importadas.');
-      } catch { setNotice('Base do Supabase nao carregou. Mostrando unidades locais/importadas.'); }
+      const local = loadLocalUnidades<UnidadeDiretor>().map((item) => ({ ...item, origem: item.origem || 'Local' }));
+      setUnidades(mergeUnidades<UnidadeDiretor>(local, fallbackUnidades));
+      const result = await fetchSupabaseUnidades();
+      if (result.unidades.length > 0) {
+        setUnidades(mergeUnidades<UnidadeDiretor>(result.unidades as UnidadeDiretor[], local, fallbackUnidades));
+        setNotice(`Base carregada do Supabase: ${result.tableName} (${result.unidades.length} unidade(s)).`);
+      } else {
+        setNotice('Base do Supabase nao carregou. Mostrando unidades locais/importadas.');
+      }
     }
     loadUnidades();
   }, []);
