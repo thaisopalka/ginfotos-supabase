@@ -12,7 +12,6 @@ import Pastas from './pages/Pastas';
 import Admin from './pages/Admin';
 import Relatorios from './pages/Relatorios';
 import WhatsappDiretores from './pages/WhatsappDiretores';
-import Historico from './pages/Historico';
 import Perfil from './pages/Perfil';
 import MapaUnidades from './pages/MapaUnidades';
 import NotFound from './pages/NotFound';
@@ -54,13 +53,11 @@ function App() {
             <Route path="/pastas" element={<ProtectedRoute><Pastas /></ProtectedRoute>} />
             <Route path="/relatorios" element={<ProtectedRoute><Relatorios /></ProtectedRoute>} />
             <Route path="/whatsapp-diretores" element={<ProtectedRoute><WhatsappDiretores /></ProtectedRoute>} />
-            <Route path="/historico" element={<ProtectedRoute><Historico /></ProtectedRoute>} />
             <Route path="/perfil" element={<ProtectedRoute><Perfil user={user} onUserChange={setUser} /></ProtectedRoute>} />
             <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
             <Route path="/not-found" element={<NotFound />} />
             <Route path="*" element={<Navigate to={location.pathname === '/login' ? '/login' : '/not-found'} replace />} />
           </Routes>
-          {!isLoginRoute && <div className="page-footer">DESENVOLVIDO POR THAÍS OPALKA</div>}
         </>}
       </main>
     </div>
