@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { getCurrentUser, AppUser } from './lib/session';
 import { ProtectedRoute } from './routes/ProtectedRoute';
+import { onGinfotosNotification, requestGinfotosNotificationPermission } from './lib/notifications';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -27,6 +28,7 @@ export interface UserProfile {
 function App() {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<{ title: string; body: string } | null>(null);
   const location = useLocation();
   const isLoginRoute = location.pathname === '/login';
 
@@ -34,6 +36,11 @@ function App() {
     const currentUser = getCurrentUser();
     setUser(currentUser);
     setLoading(false);
+    requestGinfotosNotificationPermission();
+    return onGinfotosNotification((payload) => {
+      setToast(payload);
+      window.setTimeout(() => setToast(null), 5000);
+    });
   }, []);
 
   const profile: UserProfile = user ? { id: user.email, email: user.email, name: user.name, full_name: user.name, role: user.role } : {};
@@ -58,6 +65,7 @@ function App() {
             <Route path="/not-found" element={<NotFound />} />
             <Route path="*" element={<Navigate to={location.pathname === '/login' ? '/login' : '/not-found'} replace />} />
           </Routes>
+          {toast && <div className="notification-toast"><strong>{toast.title}</strong><br />{toast.body}</div>}
         </>}
       </main>
     </div>
