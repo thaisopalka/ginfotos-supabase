@@ -1,0 +1,19 @@
+{
+  "name": "GINFOTOS 6ª CRE",
+  "short_name": "GINFOTOS",
+  "description": "Aplicativo de vistorias técnicas, fotos, relatórios e pastas da E/6ª CRE/GIN.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#10243f",
+  "theme_color": "#10243f",
+  "icons": [
+    {
+      "src": "/ginfotos-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
