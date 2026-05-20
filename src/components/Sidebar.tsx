@@ -15,8 +15,7 @@ const navItems = [
   { to: '/mapa-unidades', label: 'Mapa das Unidades', icon: '🗺️' },
   { to: '/relatorios', label: 'Relatórios Word', icon: '📄' },
   { to: '/whatsapp-diretores', label: 'WhatsApp Diretores', icon: '💬' },
-  { to: '/pastas', label: 'Pastas', icon: '📁' },
-  { to: '/historico', label: 'Arquivo / Histórico', icon: '🗂️' }
+  { to: '/pastas', label: 'Pastas', icon: '📁' }
 ];
 
 export default function Sidebar({ isAdmin, email, name }: SidebarProps) {
@@ -30,7 +29,10 @@ export default function Sidebar({ isAdmin, email, name }: SidebarProps) {
   return (
     <div className="sidebar-content">
       <div>
-        <div className="brand-block"><div className="brand-logo">G</div><div><p className="brand-title">GINFOTOS 6ª CRE</p><p className="brand-subtitle">DESENVOLVIDO POR THAÍS OPALKA</p></div></div>
+        <div className="brand-block">
+          <img className="brand-logo-img" src="/ginfotos-logo.svg" alt="GINFOTOS 6ª CRE" />
+          <div><p className="brand-title">GINFOTOS 6ª CRE</p><p className="brand-subtitle">DESENVOLVIDO POR THAÍS OPALKA</p></div>
+        </div>
         <nav className="app-nav" aria-label="Menu principal">
           {navItems.map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}
           {isAdmin && <NavLink to="/admin" className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}><span className="nav-icon" aria-hidden="true">⚙️</span>Admin<span className="admin-badge">ADMIN</span></NavLink>}
