@@ -96,6 +96,16 @@ function fullAddress(unit: UnidadeMapa) {
   return [name, bairro, 'Rio de Janeiro RJ'].filter(Boolean).join(', ');
 }
 
+function normalizeText(value?: string | null) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function sameNeighborhood(a: UnidadeMapa, b: UnidadeMapa) {
+  const bairroA = normalizeText(a.bairro);
+  const bairroB = normalizeText(b.bairro);
+  return Boolean(bairroA && bairroB && bairroA === bairroB);
+}
+
 function searchLabel(unit: UnidadeMapa) {
   return `${unit.designacao || ''} ${unit.name || ''} ${unit.address || ''} ${unit.bairro || ''} ${unit.diretor_geral || ''}`.toLowerCase();
 }
@@ -139,6 +149,19 @@ function stopTitle(unit: UnidadeMapa) {
   return unit.designacao ? `${unit.designacao} - ${unit.name}` : unit.name;
 }
 
+function sortByNeighborhoodAndName(units: UnidadeMapa[], anchor?: UnidadeMapa) {
+  return units.slice().sort((a, b) => {
+    if (anchor) {
+      const aSame = sameNeighborhood(anchor, a) ? 0 : 1;
+      const bSame = sameNeighborhood(anchor, b) ? 0 : 1;
+      if (aSame !== bSame) return aSame - bSame;
+    }
+    const bairroCompare = String(a.bairro || '').localeCompare(String(b.bairro || ''));
+    if (bairroCompare !== 0) return bairroCompare;
+    return String(a.designacao || a.name).localeCompare(String(b.designacao || b.name));
+  });
+}
+
 function buildRouteStops(units: UnidadeMapa[], start: UserLocation | null, maxStops: number) {
   const candidates = units.filter((unit) => unit.name && unit.name !== 'Unidade sem nome');
   const withCoordinates = candidates.filter(hasCoordinates);
@@ -174,16 +197,27 @@ function buildRouteStops(units: UnidadeMapa[], start: UserLocation | null, maxSt
 
   if (ordered.length < maxStops) {
     const usedIds = new Set(ordered.map((unit) => unit.id));
-    const remaining = [...withCoordinates, ...withoutCoordinates]
-      .filter((unit) => !usedIds.has(unit.id))
-      .sort((a, b) => String(a.bairro || a.name).localeCompare(String(b.bairro || b.name)));
-
-    remaining.slice(0, maxStops - ordered.length).forEach((unit) => {
-      ordered.push({ ...unit, routeDistanceFromPrevious: null });
-    });
+    const remaining = sortByNeighborhoodAndName([...withCoordinates, ...withoutCoordinates].filter((unit) => !usedIds.has(unit.id)));
+    remaining.slice(0, maxStops - ordered.length).forEach((unit) => ordered.push({ ...unit, routeDistanceFromPrevious: null }));
   }
 
   return ordered;
+}
+
+function buildRouteNearAnchor(anchor: UnidadeMapa, allUnits: UnidadeMapa[], maxStops: number) {
+  const anchorPoint = coordinatePoint(anchor);
+  const candidates = allUnits.filter((unit) => unit.id !== anchor.id && unit.name && unit.name !== 'Unidade sem nome');
+  const sameBairro = candidates.filter((unit) => sameNeighborhood(anchor, unit));
+  const base = sameBairro.length > 0 ? sameBairro : candidates;
+
+  let nextStops: RouteStop[] = [];
+  if (anchorPoint) {
+    nextStops = buildRouteStops(base, anchorPoint, Math.max(0, maxStops - 1));
+  } else {
+    nextStops = sortByNeighborhoodAndName(base, anchor).slice(0, Math.max(0, maxStops - 1)).map((unit) => ({ ...unit, routeDistanceFromPrevious: null }));
+  }
+
+  return [{ ...anchor, routeDistanceFromPrevious: null }, ...nextStops].slice(0, maxStops);
 }
 
 function googleRouteUrl(stops: RouteStop[], userLocation: UserLocation | null) {
@@ -221,6 +255,7 @@ export default function MapaUnidades() {
   const [nearestFirst, setNearestFirst] = useState(false);
   const [routeLimit, setRouteLimit] = useState(6);
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
+  const [routeMode, setRouteMode] = useState('');
 
   const loadUnidades = async () => {
     const local = loadLocalUnidades().map((item) => ({ ...item, origem: item.origem || 'Local' }));
@@ -305,12 +340,27 @@ export default function MapaUnidades() {
       return;
     }
 
-    const route = buildRouteStops(candidates, userLocation, routeLimit);
+    let route: RouteStop[];
+    let anchor: UnidadeMapa | null = null;
+    const isAnchorSearch = query.trim().length > 0 && candidates.length === 1;
+
+    if (isAnchorSearch) {
+      anchor = candidates[0];
+      route = buildRouteNearAnchor(anchor, unidades, routeLimit);
+      setRouteMode(`Rota a partir de ${stopTitle(anchor)}`);
+    } else {
+      route = buildRouteStops(candidates, userLocation, routeLimit);
+      setRouteMode(query.trim() ? `Rota do filtro: ${query.trim()}` : 'Rota geral');
+    }
+
     setRouteStops(route);
     setTab('rotas');
 
     const routeWithCoordinates = route.filter(hasCoordinates).length;
-    if (!userLocation && routeWithCoordinates > 0) {
+    if (anchor) {
+      const sameBairroCount = route.filter((unit) => unit.id !== anchor?.id && sameNeighborhood(anchor as UnidadeMapa, unit)).length;
+      setNotice(`Rota criada a partir da escola pesquisada. Incluí ${sameBairroCount} unidade(s) do mesmo bairro e próximas na sequência.`);
+    } else if (!userLocation && routeWithCoordinates > 0) {
       setNotice(`Rota criada com ${route.length} unidade(s). Para ordenar pela sua localização exata, clique em Minha localização.`);
     } else if (routeWithCoordinates === 0) {
       setNotice(`Rota criada com ${route.length} unidade(s) pelo endereço. Para cálculo real de proximidade, preencha latitude/longitude das unidades.`);
@@ -341,7 +391,7 @@ export default function MapaUnidades() {
       setNotice('Gere uma rota diária primeiro.');
       return;
     }
-    const text = `ROTA DIÁRIA - GINFOTOS 6ª CRE\n\n${routeText(routeStops)}`;
+    const text = `ROTA DIÁRIA - GINFOTOS 6ª CRE\n${routeMode ? `${routeMode}\n` : ''}\n${routeText(routeStops)}`;
     try {
       await navigator.clipboard.writeText(text);
       setNotice('Roteiro copiado. Você pode colar no WhatsApp ou em uma mensagem.');
@@ -367,7 +417,7 @@ export default function MapaUnidades() {
       </div>
 
       <section className="page-card">
-        <p className="page-description">Use a aba Rotas para montar uma rota diária por proximidade. Primeiro filtre por bairro ou lista do dia, depois clique em Gerar rota diária.</p>
+        <p className="page-description">Para achar escolas próximas de uma unidade, pesquise a escola desejada e clique em Gerar rota diária. O app coloca essa escola como ponto de partida e busca unidades do mesmo bairro/próximas.</p>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginTop: 16 }}>
           <input aria-label="Buscar escola ou bairro" placeholder="Buscar por bairro, escola, designação, endereço ou diretor" value={query} onChange={(event) => setQuery(event.target.value)} style={{ flex: '1 1 320px' }} />
           <button type="button" className={tab === 'mapa' ? 'primary' : 'empty-button'} onClick={() => setTab('mapa')}>Mapa</button>
@@ -383,7 +433,7 @@ export default function MapaUnidades() {
           <button type="button" className="primary" onClick={generateDailyRoute}>Gerar rota diária</button>
         </div>
         {notice && <p className="notice">{notice}</p>}
-        {unitsWithCoordinates === 0 && <p className="notice">A base atual ainda não tem latitude/longitude. A rota será gerada pelo endereço. Para proximidade real, preencha as coordenadas na aba Unidades Escolares.</p>}
+        {unitsWithCoordinates === 0 && <p className="notice">A base atual ainda não tem latitude/longitude. A rota será gerada pelo endereço e pelo bairro. Para proximidade real, preencha as coordenadas na aba Unidades Escolares.</p>}
       </section>
 
       {tab === 'rotas' && (
@@ -392,14 +442,14 @@ export default function MapaUnidades() {
             <div>
               <p className="page-label">Planejamento diário</p>
               <h2>Rotas do dia</h2>
-              <p className="page-description">Unidades com coordenadas no filtro atual: {filteredWithCoordinates}. Sem coordenadas, a rota abre pelo endereço no Google Maps.</p>
+              <p className="page-description">{routeMode || `Unidades com coordenadas no filtro atual: ${filteredWithCoordinates}. Sem coordenadas, a rota usa bairro/endereço.`}</p>
             </div>
             <span className="status-pill">{routeStops.length} parada(s)</span>
           </div>
 
           {routeStops.length === 0 ? (
             <div className="empty-state">
-              <p>Filtre por bairro ou por escolas desejadas e clique em Gerar rota diária.</p>
+              <p>Pesquise uma escola específica para gerar uma rota a partir dela, ou pesquise um bairro para montar uma rota do bairro.</p>
               <button type="button" className="empty-button" onClick={generateDailyRoute}>Gerar rota agora</button>
             </div>
           ) : (
@@ -436,7 +486,7 @@ export default function MapaUnidades() {
                         <td><strong>{stopTitle(unit)}</strong><br /><span className="page-description">{unit.diretor_geral || 'Direção não informada'}</span></td>
                         <td>{unit.bairro || '—'}</td>
                         <td>{unit.address || '—'}</td>
-                        <td>{unit.routeDistanceFromPrevious === null || unit.routeDistanceFromPrevious === undefined ? 'Por endereço' : `${unit.routeDistanceFromPrevious.toFixed(1)} km`}</td>
+                        <td>{unit.routeDistanceFromPrevious === null || unit.routeDistanceFromPrevious === undefined ? (index === 0 ? 'Ponto inicial' : 'Mesmo bairro/endereço') : `${unit.routeDistanceFromPrevious.toFixed(1)} km`}</td>
                         <td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => selectUnit(unit)}>Mapa</button><button type="button" className="empty-link" onClick={() => openExternal(wazeUrl(unit))}>Waze</button><button type="button" className="empty-link danger-link" onClick={() => removeRouteStop(unit.id)}>Remover</button></div></td>
                       </tr>
                     ))}
@@ -465,7 +515,7 @@ export default function MapaUnidades() {
               <div style={{ display: 'grid', gap: 10, marginTop: 18 }}>
                 <button type="button" className="primary large" onClick={() => openExternal(wazeUrl(selected))}>Abrir no Waze</button>
                 <button type="button" className="empty-button" onClick={() => openExternal(googleMapsOpenUrl(selected))}>Abrir no Google Maps</button>
-                <button type="button" className="empty-button" onClick={() => setTab('rotas')}>Montar rota diária</button>
+                <button type="button" className="empty-button" onClick={() => { setQuery(selected.name); setTab('rotas'); }}>Montar rota a partir desta escola</button>
                 <button type="button" className="empty-button" onClick={() => setTab('lista')}>Ver lista de unidades</button>
               </div>
             </aside>
@@ -500,6 +550,7 @@ export default function MapaUnidades() {
                       <td>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           <button type="button" className="empty-link" onClick={() => selectUnit(unit)}>Ver mapa</button>
+                          <button type="button" className="empty-link" onClick={() => { setQuery(unit.name); setTab('rotas'); }}>Rota a partir daqui</button>
                           <button type="button" className="empty-link" onClick={() => openExternal(wazeUrl(unit))}>Waze</button>
                           <button type="button" className="empty-link" onClick={() => openExternal(googleMapsOpenUrl(unit))}>Google Maps</button>
                         </div>
