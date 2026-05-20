@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { notifyGinfotos } from '../lib/notifications';
 
 interface UnidadeFolder {
   id: string;
@@ -10,54 +11,29 @@ interface UnidadeFolder {
   bairro?: string | null;
   telefone?: string | null;
   diretor_geral?: string | null;
-  celular_diretor_geral?: string | null;
-  diretor_adjunto?: string | null;
-  celular_diretor_adjunto?: string | null;
   origem?: string;
 }
 
-interface LocalVisitRecord {
+interface FolderFile {
   id: string;
-  unidade_id: string;
-  unidade_nome: string;
-  designacao?: string | null;
-  endereco?: string | null;
-  bairro?: string | null;
-  telefone?: string | null;
-  diretor_geral?: string | null;
-  celular_diretor_geral?: string | null;
-  diretor_adjunto?: string | null;
-  celular_diretor_adjunto?: string | null;
-  visit_date: string;
-  tipo: string;
-  representante: string;
-  servicos: string;
-  observacoes: string;
-  conclusao?: string;
-  photo_count: number;
+  folderKey: string;
+  name: string;
+  type: string;
+  size: number;
+  dataUrl: string;
+  createdAt: string;
 }
 
-interface SupabaseVisit {
+interface ExtraFolder {
   id: string;
-  unidade_id?: string | null;
-  visit_date?: string | null;
-  visitor_name?: string | null;
-  notes?: string | null;
+  name: string;
+  description: string;
+  createdAt: string;
 }
 
-interface FolderVisit {
-  id: string;
-  data: string;
-  tipo: string;
-  representante: string;
-  fotos: number;
-  resumo: string;
-  conclusao: string;
-  origem: string;
-}
-
-const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
 const LOCAL_UNIDADES_KEY = 'ginfotos_unidades_local';
+const LOCAL_FOLDER_FILES_KEY = 'ginfotos_folder_files_local';
+const LOCAL_EXTRA_FOLDERS_KEY = 'ginfotos_extra_folders_local';
 
 const fallbackUnidades: UnidadeFolder[] = [
   { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', origem: 'Base provisoria' },
@@ -66,28 +42,11 @@ const fallbackUnidades: UnidadeFolder[] = [
 ];
 
 function loadLocalArray<T>(key: string): T[] {
-  try {
-    return JSON.parse(localStorage.getItem(key) || '[]') as T[];
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(localStorage.getItem(key) || '[]') as T[]; } catch { return []; }
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return 'Nao informado';
-  const [year, month, day] = value.slice(0, 10).split('-');
-  if (!year || !month || !day) return value;
-  return `${day}/${month}/${year}`;
-}
-
-function notesValue(notes: string | null | undefined, label: string) {
-  if (!notes) return '';
-  const line = notes.split('\n').find((item) => item.toLowerCase().startsWith(label.toLowerCase()));
-  return line ? line.replace(new RegExp(`^${label}:?\\s*`, 'i'), '').trim() : '';
-}
-
-function valueOrDefault(value?: string | null) {
-  return value && value.trim() ? value : 'Nao informado';
+function saveLocalArray<T>(key: string, value: T[]) {
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
 function normalizeUnidade(item: Partial<UnidadeFolder>): UnidadeFolder {
@@ -99,236 +58,178 @@ function normalizeUnidade(item: Partial<UnidadeFolder>): UnidadeFolder {
     bairro: item.bairro || '',
     telefone: item.telefone || '',
     diretor_geral: item.diretor_geral || '',
-    celular_diretor_geral: item.celular_diretor_geral || '',
-    diretor_adjunto: item.diretor_adjunto || '',
-    celular_diretor_adjunto: item.celular_diretor_adjunto || '',
     origem: item.origem || 'Local'
   };
+}
+
+function folderKey(folder: UnidadeFolder | ExtraFolder) {
+  return 'designacao' in folder ? String(folder.designacao || folder.id || folder.name) : String(folder.id);
 }
 
 function mergeUnidades(...groups: UnidadeFolder[][]) {
   const map = new Map<string, UnidadeFolder>();
   groups.flat().forEach((item) => {
     const normalized = normalizeUnidade(item);
-    const key = (normalized.designacao || normalized.id || normalized.name).toLowerCase();
+    const key = folderKey(normalized).toLowerCase();
     if (!map.has(key)) map.set(key, normalized);
   });
-  return Array.from(map.values()).sort((a, b) => (a.designacao || a.name).localeCompare(b.designacao || b.name));
+  return Array.from(map.values()).sort((a, b) => String(a.designacao || a.name).localeCompare(String(b.designacao || b.name)));
 }
 
-function getRemoteUnitKey(visit: SupabaseVisit) {
-  return notesValue(visit.notes, 'Designacao') || notesValue(visit.notes, 'Unidade escolar') || visit.unidade_id || '';
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function visitMatchesFolder(visit: LocalVisitRecord, folder: UnidadeFolder) {
-  const folderName = folder.name?.toLowerCase();
-  const folderDesignation = folder.designacao?.toLowerCase();
-  return (
-    visit.unidade_id === folder.id ||
-    visit.designacao?.toLowerCase() === folderDesignation ||
-    visit.unidade_nome?.toLowerCase() === folderName
-  );
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Falha ao ler arquivo'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function Pastas() {
   const [unidades, setUnidades] = useState<UnidadeFolder[]>(fallbackUnidades);
-  const [localVisits, setLocalVisits] = useState<LocalVisitRecord[]>([]);
-  const [remoteVisits, setRemoteVisits] = useState<SupabaseVisit[]>([]);
+  const [extraFolders, setExtraFolders] = useState<ExtraFolder[]>([]);
+  const [files, setFiles] = useState<FolderFile[]>([]);
   const [query, setQuery] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderDescription, setNewFolderDescription] = useState('');
   const navigate = useNavigate();
 
   const loadData = async () => {
     const localUnits = loadLocalArray<UnidadeFolder>(LOCAL_UNIDADES_KEY).map((item) => ({ ...item, origem: item.origem || 'Local' }));
-    const localVisitData = loadLocalArray<LocalVisitRecord>(LOCAL_VISITS_KEY);
-    setLocalVisits(localVisitData);
+    setExtraFolders(loadLocalArray<ExtraFolder>(LOCAL_EXTRA_FOLDERS_KEY));
+    setFiles(loadLocalArray<FolderFile>(LOCAL_FOLDER_FILES_KEY));
     setUnidades(mergeUnidades(localUnits, fallbackUnidades));
-
     try {
-      const unidadesResult = await supabase
-        .from('unidades')
-        .select('id, name, address, designacao, bairro, telefone, diretor_geral, celular_diretor_geral, diretor_adjunto, celular_diretor_adjunto')
-        .order('name');
-
-      if (!unidadesResult.error && unidadesResult.data && unidadesResult.data.length > 0) {
-        setUnidades(mergeUnidades(localUnits, (unidadesResult.data as UnidadeFolder[]).map((item) => ({ ...item, origem: 'Supabase' })), fallbackUnidades));
+      const result = await supabase.from('unidades').select('id, name, address, designacao, bairro, telefone, diretor_geral').order('name');
+      if (!result.error && result.data && result.data.length > 0) {
+        setUnidades(mergeUnidades(localUnits, (result.data as UnidadeFolder[]).map((item) => ({ ...item, origem: 'Supabase' })), fallbackUnidades));
       }
-
-      const visitasResult = await supabase.from('visitas').select('id, unidade_id, visit_date, visitor_name, notes').order('visit_date', { ascending: false });
-      if (!visitasResult.error && visitasResult.data) {
-        setRemoteVisits(visitasResult.data as SupabaseVisit[]);
-      } else {
-        setMessage('Pastas carregadas. Visitas locais continuam disponiveis se o Supabase falhar.');
-      }
+      setMessage('Pastas atualizadas.');
     } catch {
-      setMessage('Supabase nao respondeu. Pastas locais/importadas continuam disponiveis.');
+      setMessage('Supabase não respondeu. Pastas locais continuam disponíveis.');
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
-  const folders = useMemo(() => {
+  const allFolders = useMemo(() => {
+    const unitFolders = unidades.map((unit) => ({ key: folderKey(unit), title: `${unit.designacao || 'Sem designação'} - ${unit.name}`, subtitle: unit.bairro || unit.address || 'Pasta da unidade', type: 'unit' as const, raw: unit }));
+    const customFolders = extraFolders.map((folder) => ({ key: folderKey(folder), title: folder.name, subtitle: folder.description || 'Pasta criada manualmente', type: 'custom' as const, raw: folder }));
     const term = query.trim().toLowerCase();
-    return unidades.filter((unidade) => {
-      const searchable = [
-        unidade.designacao,
-        unidade.name,
-        unidade.address,
-        unidade.bairro,
-        unidade.telefone,
-        unidade.diretor_geral,
-        unidade.celular_diretor_geral,
-        unidade.diretor_adjunto,
-        unidade.celular_diretor_adjunto,
-        unidade.origem
-      ]
-        .join(' ')
-        .toLowerCase();
-      return !term || searchable.includes(term);
-    });
-  }, [query, unidades]);
+    return [...unitFolders, ...customFolders].filter((folder) => !term || `${folder.title} ${folder.subtitle}`.toLowerCase().includes(term));
+  }, [unidades, extraFolders, query]);
 
-  const selectedFolder = useMemo(() => unidades.find((item) => item.id === selectedId) || null, [selectedId, unidades]);
+  const selectedFolder = allFolders.find((folder) => folder.key === selectedKey) || null;
+  const selectedFiles = files.filter((file) => file.folderKey === selectedKey);
 
-  const visitsByFolder = useMemo<FolderVisit[]>(() => {
-    if (!selectedFolder) return [];
+  const createFolder = (event: FormEvent) => {
+    event.preventDefault();
+    if (!newFolderName.trim()) {
+      setMessage('Digite um nome para criar a pasta.');
+      return;
+    }
+    const folder: ExtraFolder = { id: `folder-${Date.now()}`, name: newFolderName.trim(), description: newFolderDescription.trim(), createdAt: new Date().toISOString() };
+    const updated = [folder, ...extraFolders];
+    setExtraFolders(updated);
+    saveLocalArray(LOCAL_EXTRA_FOLDERS_KEY, updated);
+    setNewFolderName('');
+    setNewFolderDescription('');
+    setSelectedKey(folder.id);
+    setMessage('Nova pasta criada.');
+    notifyGinfotos('GINFOTOS - Pasta criada', `Nova pasta: ${folder.name}`);
+  };
 
-    const localMatches = localVisits
-      .filter((visit) => visitMatchesFolder(visit, selectedFolder))
-      .map((visit) => ({
-        id: visit.id,
-        data: visit.visit_date,
-        tipo: visit.tipo || 'VISTORIA TECNICA',
-        representante: visit.representante || 'ENGA. MARCIA BRAGA',
-        fotos: visit.photo_count || 0,
-        resumo: visit.servicos || visit.observacoes || 'Visita registrada.',
-        conclusao: visit.conclusao || 'Nao informado',
-        origem: 'Dispositivo'
-      }));
+  const renameSelectedFolder = () => {
+    if (!selectedFolder || selectedFolder.type !== 'custom') {
+      setMessage('A edição do nome é liberada para pastas criadas manualmente. Unidades escolares devem ser editadas na aba Unidades Escolares.');
+      return;
+    }
+    const name = window.prompt('Novo nome da pasta:', selectedFolder.title);
+    if (!name?.trim()) return;
+    const updated = extraFolders.map((folder) => folder.id === selectedFolder.key ? { ...folder, name: name.trim() } : folder);
+    setExtraFolders(updated);
+    saveLocalArray(LOCAL_EXTRA_FOLDERS_KEY, updated);
+    setMessage('Pasta atualizada.');
+  };
 
-    const selectedKeys = [selectedFolder.id, selectedFolder.designacao, selectedFolder.name].filter(Boolean).map((item) => String(item).toLowerCase());
+  const removeSelectedFolder = () => {
+    if (!selectedFolder || selectedFolder.type !== 'custom') {
+      setMessage('Somente pastas criadas manualmente podem ser removidas aqui.');
+      return;
+    }
+    if (!window.confirm(`Remover a pasta ${selectedFolder.title}? Os arquivos salvos nela também serão removidos deste dispositivo.`)) return;
+    const updatedFolders = extraFolders.filter((folder) => folder.id !== selectedFolder.key);
+    const updatedFiles = files.filter((file) => file.folderKey !== selectedFolder.key);
+    setExtraFolders(updatedFolders);
+    setFiles(updatedFiles);
+    saveLocalArray(LOCAL_EXTRA_FOLDERS_KEY, updatedFolders);
+    saveLocalArray(LOCAL_FOLDER_FILES_KEY, updatedFiles);
+    setSelectedKey(null);
+    setMessage('Pasta removida.');
+  };
 
-    const remoteMatches = remoteVisits
-      .filter((visit) => selectedKeys.includes(getRemoteUnitKey(visit).toLowerCase()) || selectedKeys.includes(String(visit.unidade_id || '').toLowerCase()))
-      .map((visit) => ({
-        id: visit.id,
-        data: visit.visit_date || '',
-        tipo: notesValue(visit.notes, 'Tipo de visita/obra') || 'VISTORIA TECNICA',
-        representante: visit.visitor_name || notesValue(visit.notes, 'Representante E/6 CRE/GIN') || 'ENGA. MARCIA BRAGA',
-        fotos: 0,
-        resumo: notesValue(visit.notes, 'Servicos verificados') || visit.notes || 'Visita sincronizada.',
-        conclusao: notesValue(visit.notes, 'Conclusao') || 'Nao informado',
-        origem: 'Supabase'
-      }));
+  const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!selectedFolder || !selectedKey) {
+      setMessage('Abra uma pasta antes de anexar arquivos.');
+      return;
+    }
+    const selected = Array.from(event.target.files || []);
+    if (selected.length === 0) return;
+    setMessage('Salvando arquivo(s) no dispositivo...');
+    try {
+      const newFiles: FolderFile[] = [];
+      for (const file of selected) {
+        const dataUrl = await readFileAsDataUrl(file);
+        newFiles.push({ id: `file-${Date.now()}-${Math.random()}`, folderKey: selectedKey, name: file.name, type: file.type || 'Arquivo', size: file.size, dataUrl, createdAt: new Date().toISOString() });
+      }
+      const updated = [...newFiles, ...files];
+      setFiles(updated);
+      saveLocalArray(LOCAL_FOLDER_FILES_KEY, updated);
+      setMessage(`${newFiles.length} arquivo(s) anexado(s) à pasta.`);
+      notifyGinfotos('GINFOTOS - Arquivo anexado', `${newFiles.length} arquivo(s) em ${selectedFolder.title}`);
+    } catch {
+      setMessage('Não foi possível salvar todos os arquivos. Arquivos muito grandes podem ultrapassar o limite do navegador.');
+    } finally {
+      event.target.value = '';
+    }
+  };
 
-    return [...localMatches, ...remoteMatches].sort((a, b) => (b.data || '').localeCompare(a.data || ''));
-  }, [localVisits, remoteVisits, selectedFolder]);
+  const removeFile = (fileId: string) => {
+    const updated = files.filter((file) => file.id !== fileId);
+    setFiles(updated);
+    saveLocalArray(LOCAL_FOLDER_FILES_KEY, updated);
+    setMessage('Arquivo removido da pasta.');
+  };
 
   return (
     <div className="dashboard-page">
-      <div className="top-row">
-        <div>
-          <p className="page-label">Arquivo por unidade</p>
-          <h1>Pastas</h1>
-        </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button type="button" className="empty-button" onClick={loadData}>Atualizar</button>
-          <button type="button" className="empty-button" onClick={() => navigate('/nova-visita')}>+ Nova Visita</button>
-        </div>
-      </div>
-
+      <div className="top-row"><div><p className="page-label">Arquivo por unidade</p><h1>Pastas</h1></div><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><button type="button" className="empty-button" onClick={loadData}>Atualizar</button><button type="button" className="empty-button" onClick={() => navigate('/nova-visita')}>+ Nova Visita</button></div></div>
       <section className="page-card">
-        <p className="page-description">Cada unidade escolar aparece como uma pasta completa, com endereco, telefone, direcao e historico de visitas.</p>
-        <div style={{ display: 'flex', gap: 12, margin: '18px 0', flexWrap: 'wrap' }}>
-          <input aria-label="Buscar pasta" placeholder="Buscar por designacao, unidade, bairro, telefone ou diretor" value={query} onChange={(event) => setQuery(event.target.value)} style={{ flex: '1 1 260px' }} />
-          <span className="status-pill">{folders.length} pasta(s)</span>
-        </div>
+        <p className="page-description">Gerencie pastas por unidade escolar e crie novas pastas para guardar OS, documentos, fotos, vídeos e anexos.</p>
+        <div style={{ display: 'flex', gap: 12, margin: '18px 0', flexWrap: 'wrap' }}><input aria-label="Buscar pasta" placeholder="Buscar por designação, unidade, bairro ou pasta" value={query} onChange={(event) => setQuery(event.target.value)} style={{ flex: '1 1 260px' }} /><span className="status-pill">{allFolders.length} pasta(s)</span></div>
         {message && <p className="notice">{message}</p>}
+        <form onSubmit={createFolder} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1fr) auto', gap: 12, alignItems: 'end' }}><div className="field"><label>Nova pasta</label><input value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Ex.: OS recebidas, Orçamentos, Fotos extras" /></div><div className="field"><label>Descrição</label><input value={newFolderDescription} onChange={(e) => setNewFolderDescription(e.target.value)} placeholder="Opcional" /></div><button type="submit" className="primary">Criar pasta</button></form>
       </section>
 
       <section className="stats-grid">
-        {folders.map((folder) => (
-          <button key={`${folder.origem}-${folder.id}-${folder.designacao}`} type="button" className="stat-card" onClick={() => setSelectedId(folder.id)} style={{ textAlign: 'left', cursor: 'pointer' }}>
-            <div className="stat-icon" aria-hidden="true">PA</div>
-            <div>
-              <p className="stat-value" style={{ fontSize: '1.05rem' }}>{folder.designacao || 'Sem designacao'}</p>
-              <p className="stat-label">{folder.name}</p>
-              <p className="page-description" style={{ margin: '6px 0 0' }}>{folder.bairro || 'Bairro nao informado'}</p>
-            </div>
-          </button>
+        {allFolders.map((folder) => (
+          <button key={`${folder.type}-${folder.key}`} type="button" className="stat-card" onClick={() => setSelectedKey(folder.key)} style={{ textAlign: 'left', cursor: 'pointer' }}><div className="stat-icon" aria-hidden="true">{folder.type === 'unit' ? 'PA' : '📁'}</div><div><p className="stat-value" style={{ fontSize: '1.05rem' }}>{folder.title}</p><p className="page-description" style={{ margin: '6px 0 0' }}>{folder.subtitle}</p><p className="stat-label">{files.filter((file) => file.folderKey === folder.key).length} arquivo(s)</p></div></button>
         ))}
       </section>
 
       {selectedFolder && (
         <section className="page-card">
-          <div className="recent-header">
-            <div>
-              <p className="page-label">Pasta da unidade</p>
-              <h2>{selectedFolder.designacao || 'Sem designacao'} - {selectedFolder.name}</h2>
-              <p className="page-description">{selectedFolder.address || 'Endereco nao informado'} {selectedFolder.bairro ? `- ${selectedFolder.bairro}` : ''}</p>
-            </div>
-            <button type="button" className="empty-link" onClick={() => setSelectedId(null)}>Fechar</button>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, margin: '18px 0' }}>
-            <div className="empty-state" style={{ textAlign: 'left', padding: 14 }}>
-              <strong>Telefone</strong>
-              <p>{valueOrDefault(selectedFolder.telefone)}</p>
-            </div>
-            <div className="empty-state" style={{ textAlign: 'left', padding: 14 }}>
-              <strong>Diretor(a) Geral</strong>
-              <p>{valueOrDefault(selectedFolder.diretor_geral)}</p>
-              <p>{valueOrDefault(selectedFolder.celular_diretor_geral)}</p>
-            </div>
-            <div className="empty-state" style={{ textAlign: 'left', padding: 14 }}>
-              <strong>Diretor(a) Adjunto(a)</strong>
-              <p>{valueOrDefault(selectedFolder.diretor_adjunto)}</p>
-              <p>{valueOrDefault(selectedFolder.celular_diretor_adjunto)}</p>
-            </div>
-            <div className="empty-state" style={{ textAlign: 'left', padding: 14 }}>
-              <strong>Origem da base</strong>
-              <p>{selectedFolder.origem || 'Supabase'}</p>
-            </div>
-          </div>
-
-          {visitsByFolder.length === 0 ? (
-            <div className="empty-state">
-              <p>Nenhuma visita nesta unidade ainda.</p>
-              <button type="button" className="empty-button" onClick={() => navigate('/nova-visita')}>Nova Visita</button>
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table-list">
-                <thead>
-                  <tr>
-                    <th>Data</th>
-                    <th>Tipo</th>
-                    <th>Representante</th>
-                    <th>Fotos</th>
-                    <th>Origem</th>
-                    <th>Resumo</th>
-                    <th>Conclusao</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visitsByFolder.map((visit) => (
-                    <tr key={`${visit.origem}-${visit.id}`}>
-                      <td>{formatDate(visit.data)}</td>
-                      <td>{visit.tipo}</td>
-                      <td>{visit.representante}</td>
-                      <td>{visit.fotos}</td>
-                      <td><span className="status-chip">{visit.origem}</span></td>
-                      <td>{visit.resumo}</td>
-                      <td>{visit.conclusao}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <div className="recent-header"><div><p className="page-label">Pasta aberta</p><h2>{selectedFolder.title}</h2><p className="page-description">{selectedFolder.subtitle}</p></div><button type="button" className="empty-link" onClick={() => setSelectedKey(null)}>Fechar</button></div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}><label className="empty-button" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>Anexar arquivos<input type="file" multiple onChange={uploadFiles} style={{ display: 'none' }} /></label><button type="button" className="empty-button" onClick={renameSelectedFolder}>Editar pasta</button><button type="button" className="empty-button danger-link" onClick={removeSelectedFolder}>Remover pasta</button></div>
+          {selectedFiles.length === 0 ? <div className="empty-state"><p>Nenhum arquivo anexado nesta pasta ainda.</p></div> : <div className="file-grid">{selectedFiles.map((file) => <article key={file.id} className="file-card"><strong>{file.name}</strong><p className="page-description">{file.type || 'Arquivo'} • {formatFileSize(file.size)}</p><p className="page-description">{new Date(file.createdAt).toLocaleString('pt-BR')}</p><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><a className="empty-link" href={file.dataUrl} download={file.name}>Baixar</a><button type="button" className="empty-link danger-link" onClick={() => removeFile(file.id)}>Remover</button></div></article>)}</div>}
         </section>
       )}
     </div>
