@@ -70,7 +70,13 @@ function generatePassword() {
 }
 
 function makeInviteText(user: AppUser) {
-  return `Ola! Seu acesso ao GINFOTOS 6a CRE foi criado.\n\nAcesse:\nhttps://ginfotos-supabase.vercel.app\n\nE-mail:\n${user.email}\n\nSenha provisoria:\n${user.temporary_password || '[SENHA NAO INFORMADA]'}`;
+  return `Olá! Seu acesso ao GINFOTOS 6ª CRE foi criado.\n\nAcesse:\nhttps://ginfotos-supabase.vercel.app\n\nE-mail:\n${user.email}\n\nSenha provisória:\n${user.temporary_password || '[SENHA NÃO INFORMADA]'}`;
+}
+
+function openMailClient(user: AppUser) {
+  const subject = encodeURIComponent('Seu acesso ao GINFOTOS 6ª CRE');
+  const body = encodeURIComponent(makeInviteText(user));
+  window.location.href = `mailto:${user.email}?subject=${subject}&body=${body}`;
 }
 
 function mergeUsers(localUsers: AppUser[], remoteUsers: AppUser[]) {
@@ -89,6 +95,7 @@ function loadLocalUnidades(): UnidadeAdmin[] {
 
 function saveLocalUnidades(unidades: UnidadeAdmin[]) {
   localStorage.setItem(LOCAL_UNIDADES_KEY, JSON.stringify(unidades));
+  window.dispatchEvent(new Event('ginfotos-unidades-updated'));
 }
 
 function normalizeUnidade(raw: Partial<UnidadeAdmin>): UnidadeAdmin {
@@ -122,7 +129,7 @@ function parseImportText(text: string): UnidadeAdmin[] {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.split('\t').length > 1 ? line.split('\t') : line.split(';'))
+    .map((line) => (line.split('\t').length > 1 ? line.split('\t') : line.split(';')))
     .map((cols) => normalizeUnidade({
       id: `local-${cols[0]?.trim() || Date.now()}-${Math.random()}`,
       designacao: cols[0]?.trim() || '',
@@ -166,6 +173,7 @@ export default function Admin() {
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sendingInviteId, setSendingInviteId] = useState<string | null>(null);
   const [unidades, setUnidades] = useState<UnidadeAdmin[]>([]);
   const [unidadeForm, setUnidadeForm] = useState<UnidadeAdmin>(emptyUnidade);
   const [unidadeQuery, setUnidadeQuery] = useState('');
@@ -183,10 +191,10 @@ export default function Admin() {
         saveLocalUnidades(merged);
         setUnitMessage(`${data.length} unidade(s) carregada(s) do Supabase e salvas na base local.`);
       } else if (error) {
-        setUnitMessage(`Supabase nao carregou unidades. Base local mantida. ${error.message}`);
+        setUnitMessage(`Supabase não carregou unidades. Base local mantida. ${error.message}`);
       }
     } catch {
-      setUnitMessage('Supabase nao respondeu. Base local mantida.');
+      setUnitMessage('Supabase não respondeu. Base local mantida.');
     }
   };
 
@@ -204,11 +212,13 @@ export default function Admin() {
         const merged = mergeUsers(localUsers, appUsersData as AppUser[]);
         setAppUsers(merged);
         saveLocalAppUsers(merged);
-        setMessage('Usuarios carregados. Base local sincronizada.');
-      } else if (appUsersError) setMessage(`Supabase nao carregou usuarios. Modo local ativado: ${appUsersError.message}`);
+        setMessage('Usuários carregados. Base local sincronizada.');
+      } else if (appUsersError) {
+        setMessage(`Supabase não carregou usuários. Modo local ativado: ${appUsersError.message}`);
+      }
       if (invitesData) setInvites(invitesData as Invite[]);
     } catch {
-      setMessage('Supabase nao respondeu. Modo local ativado para usuarios.');
+      setMessage('Supabase não respondeu. Modo local ativado para usuários.');
     } finally {
       setLoading(false);
     }
@@ -228,6 +238,32 @@ export default function Admin() {
     return unidades.filter((item) => [item.designacao, item.name, item.address, item.bairro, item.telefone, item.diretor_geral, item.celular_diretor_geral, item.diretor_adjunto, item.celular_diretor_adjunto].join(' ').toLowerCase().includes(term));
   }, [unidades, unidadeQuery]);
 
+  const sendInviteEmail = async (user: AppUser, useFallback = true) => {
+    setSendingInviteId(user.id);
+    setMessage('Enviando convite por e-mail...');
+    try {
+      const response = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user.email,
+          name: user.name,
+          password: user.temporary_password,
+          inviteText: makeInviteText(user)
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Não foi possível enviar o convite.');
+      setMessage(`Convite enviado por e-mail para ${user.email}.`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Falha ao enviar convite.';
+      setMessage(`${errorMessage} Abrindo o e-mail do computador/celular para envio manual.`);
+      if (useFallback) openMailClient(user);
+    } finally {
+      setSendingInviteId(null);
+    }
+  };
+
   const handleCreateAppUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage('');
@@ -240,39 +276,51 @@ export default function Admin() {
     setName(''); setEmail(''); setRole('consulta');
     try {
       const { error } = await supabase.from('app_users').insert([{ email: cleanEmail, name: cleanName, role, status: 'ATIVO', temporary_password: tempPassword, created_by: 'admin' }]);
-      if (error) { setMessage(`Usuario criado no modo local. Senha provisoria: ${tempPassword}. Supabase falhou: ${error.message}`); return; }
-      setMessage(`Usuario criado e sincronizado. Senha provisoria: ${tempPassword}`);
-      fetchAdminData();
-    } catch { setMessage(`Usuario criado no modo local. Senha provisoria: ${tempPassword}.`); }
+      if (error) {
+        setMessage(`Usuário criado no modo local. Senha provisória: ${tempPassword}. Supabase falhou: ${error.message}`);
+      } else {
+        setMessage(`Usuário criado e sincronizado. Senha provisória: ${tempPassword}`);
+        fetchAdminData();
+      }
+    } catch {
+      setMessage(`Usuário criado no modo local. Senha provisória: ${tempPassword}.`);
+    }
+    window.setTimeout(() => sendInviteEmail(localUser), 250);
   };
 
   const handleToggleStatus = async (userId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'ATIVO' ? 'BLOQUEADO' : 'ATIVO';
     const updatedLocal = updateLocalAppUser(userId, { status: newStatus }) as AppUser[];
     setAppUsers(updatedLocal);
-    try { const { error } = await supabase.from('app_users').update({ status: newStatus }).eq('id', userId); setMessage(error ? `Status atualizado localmente para ${newStatus}. Supabase falhou.` : `Status atualizado para ${newStatus}.`); }
-    catch { setMessage(`Status atualizado localmente para ${newStatus}.`); }
+    try {
+      const { error } = await supabase.from('app_users').update({ status: newStatus }).eq('id', userId);
+      setMessage(error ? `Status atualizado localmente para ${newStatus}. Supabase falhou.` : `Status atualizado para ${newStatus}.`);
+    } catch { setMessage(`Status atualizado localmente para ${newStatus}.`); }
   };
 
   const handleResetPassword = async (userId: string) => {
     const tempPassword = generatePassword();
     const updatedLocal = updateLocalAppUser(userId, { temporary_password: tempPassword }) as AppUser[];
     setAppUsers(updatedLocal);
-    try { const { error } = await supabase.from('app_users').update({ temporary_password: tempPassword }).eq('id', userId); setMessage(error ? `Nova senha provisoria local: ${tempPassword}. Supabase falhou.` : `Nova senha provisoria: ${tempPassword}`); }
-    catch { setMessage(`Nova senha provisoria local: ${tempPassword}`); }
+    try {
+      const { error } = await supabase.from('app_users').update({ temporary_password: tempPassword }).eq('id', userId);
+      setMessage(error ? `Nova senha provisória local: ${tempPassword}. Supabase falhou.` : `Nova senha provisória: ${tempPassword}`);
+    } catch { setMessage(`Nova senha provisória local: ${tempPassword}`); }
   };
 
   const handleDeleteAppUser = async (userId: string) => {
-    if (!window.confirm('Remover este usuario do app?')) return;
+    if (!window.confirm('Remover este usuário do app?')) return;
     const updatedLocal = deleteLocalAppUser(userId) as AppUser[];
     setAppUsers(updatedLocal);
-    try { const { error } = await supabase.from('app_users').delete().eq('id', userId); setMessage(error ? 'Usuario removido localmente. Supabase falhou.' : 'Usuario removido.'); }
-    catch { setMessage('Usuario removido localmente.'); }
+    try {
+      const { error } = await supabase.from('app_users').delete().eq('id', userId);
+      setMessage(error ? 'Usuário removido localmente. Supabase falhou.' : 'Usuário removido.');
+    } catch { setMessage('Usuário removido localmente.'); }
   };
 
   const handleCopyInvite = async (user: AppUser) => {
     await navigator.clipboard.writeText(makeInviteText(user));
-    setMessage('Convite copiado para a area de transferencia.');
+    setMessage('Convite copiado para a área de transferência.');
   };
 
   const saveUnidadeAdmin = async (event: FormEvent<HTMLFormElement>) => {
@@ -291,7 +339,7 @@ export default function Admin() {
 
   const importUnidadesAdmin = async () => {
     const imported = parseImportText(importText);
-    if (imported.length === 0) { setUnitMessage('Nenhuma unidade valida encontrada.'); return; }
+    if (imported.length === 0) { setUnitMessage('Nenhuma unidade válida encontrada.'); return; }
     const updated = mergeUnidades(imported, loadLocalUnidades());
     saveLocalUnidades(updated);
     setUnidades(updated);
@@ -313,19 +361,49 @@ export default function Admin() {
     const updated = withoutUnidade(loadLocalUnidades(), item);
     saveLocalUnidades(updated);
     setUnidades(withoutUnidade(unidades, item));
-    setUnitMessage('Unidade excluida da base local.');
+    setUnitMessage('Unidade excluída da base local.');
     try { if (item.designacao) await supabase.from('unidades').delete().eq('designacao', item.designacao); } catch { /* local ok */ }
   };
 
   return (
     <div className="dashboard-page">
-      <div className="top-row"><div><p className="page-label">Controle de acesso</p><h1>Admin</h1></div><button type="button" className="empty-button" onClick={fetchAdminData}>Atualizar</button></div>
+      <div className="top-row">
+        <div><p className="page-label">Controle de acesso</p><h1>Admin</h1></div>
+        <button type="button" className="empty-button" onClick={fetchAdminData}>Atualizar</button>
+      </div>
 
-      <section className="page-card"><h2 style={{ marginTop: 0 }}>Criar usuario do app</h2><p className="page-description">Crie usuarios, gere senha provisoria e copie o convite de acesso. Se o Supabase falhar, o app salva no modo local deste navegador.</p><form onSubmit={handleCreateAppUser} style={{ display: 'grid', gap: 14, marginTop: 18 }}><div className="field"><label htmlFor="admin-name">Nome</label><input id="admin-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome completo" required /></div><div className="field"><label htmlFor="admin-email">E-mail</label><input id="admin-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="email@exemplo.com" required /></div><div className="field"><label htmlFor="admin-role">Perfil</label><select id="admin-role" value={role} onChange={(event) => setRole(event.target.value)}>{ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div><button className="primary large" type="submit">Criar usuario e senha provisoria</button></form>{message && <p className="notice">{message}</p>}</section>
+      <section className="page-card">
+        <h2 style={{ marginTop: 0 }}>Criar usuário do app</h2>
+        <p className="page-description">Crie usuários, gere senha provisória e envie o convite de acesso por e-mail. Se o SMTP não estiver configurado, o app abre o e-mail do computador/celular para envio manual.</p>
+        <form onSubmit={handleCreateAppUser} style={{ display: 'grid', gap: 14, marginTop: 18 }}>
+          <div className="field"><label htmlFor="admin-name">Nome</label><input id="admin-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome completo" required /></div>
+          <div className="field"><label htmlFor="admin-email">E-mail</label><input id="admin-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="email@exemplo.com" required /></div>
+          <div className="field"><label htmlFor="admin-role">Perfil</label><select id="admin-role" value={role} onChange={(event) => setRole(event.target.value)}>{ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
+          <button className="primary large" type="submit">Criar usuário, senha e enviar convite</button>
+        </form>
+        {message && <p className="notice">{message}</p>}
+      </section>
 
-      <section className="page-card"><div className="recent-header"><div><p className="page-label">Usuarios cadastrados</p><h2>Usuarios do App</h2></div><span className="status-pill">{filteredUsers.length} usuario(s)</span></div><div style={{ display: 'flex', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}><input aria-label="Buscar usuario" placeholder="Buscar por nome, e-mail, perfil ou status" value={query} onChange={(event) => setQuery(event.target.value)} style={{ flex: '1 1 260px' }} /></div>{loading ? <div className="empty-state"><p>Carregando usuarios...</p></div> : filteredUsers.length === 0 ? <div className="empty-state"><p>Nenhum usuario encontrado.</p></div> : <div style={{ overflowX: 'auto' }}><table className="table-list"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Status</th><th>Senha provisoria</th><th>Acoes</th></tr></thead><tbody>{filteredUsers.map((user) => <tr key={user.id}><td>{user.email}</td><td>{user.name || '-'}</td><td>{user.role}</td><td><span className="status-chip">{user.status}</span></td><td>{user.temporary_password || '-'}</td><td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => handleCopyInvite(user)}>Copiar convite</button><button type="button" className="empty-link" onClick={() => handleResetPassword(user.id)}>Nova senha</button><button type="button" className="empty-link" onClick={() => handleToggleStatus(user.id, user.status)}>{user.status === 'ATIVO' ? 'Bloquear' : 'Ativar'}</button><button type="button" className="empty-link" onClick={() => handleDeleteAppUser(user.id)}>Remover</button></div></td></tr>)}</tbody></table></div>}</section>
+      <section className="page-card">
+        <div className="recent-header"><div><p className="page-label">Usuários cadastrados</p><h2>Usuários do App</h2></div><span className="status-pill">{filteredUsers.length} usuário(s)</span></div>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}><input aria-label="Buscar usuário" placeholder="Buscar por nome, e-mail, perfil ou status" value={query} onChange={(event) => setQuery(event.target.value)} style={{ flex: '1 1 260px' }} /></div>
+        {loading ? <div className="empty-state"><p>Carregando usuários...</p></div> : filteredUsers.length === 0 ? <div className="empty-state"><p>Nenhum usuário encontrado.</p></div> : <div style={{ overflowX: 'auto' }}><table className="table-list"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Status</th><th>Senha provisória</th><th>Ações</th></tr></thead><tbody>{filteredUsers.map((user) => <tr key={user.id}><td>{user.email}</td><td>{user.name || '-'}</td><td>{user.role}</td><td><span className="status-chip">{user.status}</span></td><td>{user.temporary_password || '-'}</td><td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => sendInviteEmail(user)} disabled={sendingInviteId === user.id}>{sendingInviteId === user.id ? 'Enviando...' : 'Enviar e-mail'}</button><button type="button" className="empty-link" onClick={() => openMailClient(user)}>Abrir e-mail</button><button type="button" className="empty-link" onClick={() => handleCopyInvite(user)}>Copiar convite</button><button type="button" className="empty-link" onClick={() => handleResetPassword(user.id)}>Nova senha</button><button type="button" className="empty-link" onClick={() => handleToggleStatus(user.id, user.status)}>{user.status === 'ATIVO' ? 'Bloquear' : 'Ativar'}</button><button type="button" className="empty-link danger-link" onClick={() => handleDeleteAppUser(user.id)}>Remover</button></div></td></tr>)}</tbody></table></div>}
+      </section>
 
-      <section className="page-card"><p className="page-label">Base das UEs</p><h2 style={{ marginTop: 0 }}>Unidades escolares da 6ª CRE</h2><p className="page-description">Cole a planilha aqui ou cadastre manualmente. Esta base fica salva no app e alimenta Nova Visita, WhatsApp Diretores, Pastas, Relatórios e Histórico.</p><form onSubmit={saveUnidadeAdmin} style={{ display: 'grid', gap: 12, marginTop: 14 }}><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}><div className="field"><label>Designacao</label><input value={unidadeForm.designacao || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, designacao: e.target.value }))} /></div><div className="field"><label>Unidade</label><input value={unidadeForm.name} onChange={(e) => setUnidadeForm((c) => ({ ...c, name: e.target.value }))} required /></div><div className="field"><label>Bairro</label><input value={unidadeForm.bairro || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, bairro: e.target.value }))} /></div></div><div className="field"><label>Endereco</label><input value={unidadeForm.address || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, address: e.target.value }))} /></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}><div className="field"><label>Telefone</label><input value={unidadeForm.telefone || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, telefone: e.target.value }))} /></div><div className="field"><label>Diretor(a) Geral</label><input value={unidadeForm.diretor_geral || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, diretor_geral: e.target.value }))} /></div><div className="field"><label>Celular Diretor(a)</label><input value={unidadeForm.celular_diretor_geral || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, celular_diretor_geral: e.target.value }))} /></div><div className="field"><label>Diretor(a) Adjunto(a)</label><input value={unidadeForm.diretor_adjunto || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, diretor_adjunto: e.target.value }))} /></div><div className="field"><label>Celular Adjunto(a)</label><input value={unidadeForm.celular_diretor_adjunto || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, celular_diretor_adjunto: e.target.value }))} /></div></div><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><button className="primary" type="submit">{unidadeForm.id ? 'Salvar edicao da UE' : 'Adicionar UE'}</button><button className="empty-link" type="button" onClick={() => setUnidadeForm(emptyUnidade)}>Limpar</button><button className="empty-link" type="button" onClick={fetchUnidadesAdmin}>Recarregar base</button></div></form><div className="field" style={{ marginTop: 18 }}><label>Importar planilha colada</label><textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} placeholder="Cole aqui: DESIGNACAO, UNIDADE, ENDERECO, BAIRRO, TELEFONE, DIRETOR GERAL, CELULAR DIRETOR, DIRETOR ADJUNTO, CELULAR ADJUNTO" /><button type="button" className="primary" onClick={importUnidadesAdmin}>Importar para todas as abas</button></div>{unitMessage && <p className="notice">{unitMessage}</p>}<input placeholder="Buscar UE por designacao, nome, bairro, telefone ou direcao" value={unidadeQuery} onChange={(e) => setUnidadeQuery(e.target.value)} style={{ marginTop: 18 }} /><div style={{ overflowX: 'auto', marginTop: 14 }}><table className="table-list"><thead><tr><th>Designacao</th><th>Unidade</th><th>Bairro</th><th>Diretor(a)</th><th>Celular</th><th>Adjunto(a)</th><th>Celular Adj.</th><th>Origem</th><th>Acoes</th></tr></thead><tbody>{filteredUnidades.map((item) => <tr key={`${item.origem}-${item.id}-${item.designacao}`}><td>{item.designacao || '-'}</td><td>{item.name}</td><td>{item.bairro || '-'}</td><td>{item.diretor_geral || '-'}</td><td>{item.celular_diretor_geral || '-'}</td><td>{item.diretor_adjunto || '-'}</td><td>{item.celular_diretor_adjunto || '-'}</td><td><span className="status-chip">{item.origem || 'Local'}</span></td><td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => editUnidadeAdmin(item)}>Editar</button><button type="button" className="empty-link" onClick={() => deleteUnidadeAdmin(item)}>Excluir</button></div></td></tr>)}</tbody></table></div></section>
+      <section className="page-card">
+        <p className="page-label">Base das UEs</p><h2 style={{ marginTop: 0 }}>Unidades escolares da 6ª CRE</h2>
+        <p className="page-description">Cole a planilha aqui ou cadastre manualmente. Esta base fica salva no app e alimenta Nova Visita, WhatsApp Diretores, Pastas e Relatórios.</p>
+        <form onSubmit={saveUnidadeAdmin} style={{ display: 'grid', gap: 12, marginTop: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}><div className="field"><label>Designação</label><input value={unidadeForm.designacao || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, designacao: e.target.value }))} /></div><div className="field"><label>Unidade</label><input value={unidadeForm.name} onChange={(e) => setUnidadeForm((c) => ({ ...c, name: e.target.value }))} required /></div><div className="field"><label>Bairro</label><input value={unidadeForm.bairro || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, bairro: e.target.value }))} /></div></div>
+          <div className="field"><label>Endereço</label><input value={unidadeForm.address || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, address: e.target.value }))} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}><div className="field"><label>Telefone</label><input value={unidadeForm.telefone || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, telefone: e.target.value }))} /></div><div className="field"><label>Diretor(a) Geral</label><input value={unidadeForm.diretor_geral || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, diretor_geral: e.target.value }))} /></div><div className="field"><label>Celular Diretor(a)</label><input value={unidadeForm.celular_diretor_geral || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, celular_diretor_geral: e.target.value }))} /></div><div className="field"><label>Diretor(a) Adjunto(a)</label><input value={unidadeForm.diretor_adjunto || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, diretor_adjunto: e.target.value }))} /></div><div className="field"><label>Celular Adjunto(a)</label><input value={unidadeForm.celular_diretor_adjunto || ''} onChange={(e) => setUnidadeForm((c) => ({ ...c, celular_diretor_adjunto: e.target.value }))} /></div></div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><button className="primary" type="submit">{unidadeForm.id ? 'Salvar edição da UE' : 'Adicionar UE'}</button><button className="empty-link" type="button" onClick={() => setUnidadeForm(emptyUnidade)}>Limpar</button><button className="empty-link" type="button" onClick={fetchUnidadesAdmin}>Recarregar base</button></div>
+        </form>
+        <div className="field" style={{ marginTop: 18 }}><label>Importar planilha colada</label><textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} placeholder="Cole aqui: DESIGNACAO, UNIDADE, ENDERECO, BAIRRO, TELEFONE, DIRETOR GERAL, CELULAR DIRETOR, DIRETOR ADJUNTO, CELULAR ADJUNTO" /><button type="button" className="primary" onClick={importUnidadesAdmin}>Importar para todas as abas</button></div>
+        {unitMessage && <p className="notice">{unitMessage}</p>}
+        <input placeholder="Buscar UE por designação, nome, bairro, telefone ou direção" value={unidadeQuery} onChange={(e) => setUnidadeQuery(e.target.value)} style={{ marginTop: 18 }} />
+        <div style={{ overflowX: 'auto', marginTop: 14 }}><table className="table-list"><thead><tr><th>Designação</th><th>Unidade</th><th>Bairro</th><th>Diretor(a)</th><th>Celular</th><th>Adjunto(a)</th><th>Celular Adj.</th><th>Origem</th><th>Ações</th></tr></thead><tbody>{filteredUnidades.map((item) => <tr key={`${item.origem}-${item.id}-${item.designacao}`}><td>{item.designacao || '-'}</td><td>{item.name}</td><td>{item.bairro || '-'}</td><td>{item.diretor_geral || '-'}</td><td>{item.celular_diretor_geral || '-'}</td><td>{item.diretor_adjunto || '-'}</td><td>{item.celular_diretor_adjunto || '-'}</td><td><span className="status-chip">{item.origem || 'Local'}</span></td><td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => editUnidadeAdmin(item)}>Editar</button><button type="button" className="empty-link danger-link" onClick={() => deleteUnidadeAdmin(item)}>Excluir</button></div></td></tr>)}</tbody></table></div>
+      </section>
 
       <section className="page-card"><p className="page-label">Convites antigos</p><h2 style={{ marginTop: 0 }}>Convites registrados</h2>{invites.length === 0 ? <div className="empty-state"><p>Nenhum convite antigo encontrado.</p></div> : <div style={{ overflowX: 'auto' }}><table className="table-list"><thead><tr><th>E-mail</th><th>Perfil</th><th>Convidado por</th></tr></thead><tbody>{invites.map((invite) => <tr key={invite.id}><td>{invite.email}</td><td>{invite.role || '-'}</td><td>{invite.invited_by || '-'}</td></tr>)}</tbody></table></div>}</section>
     </div>
