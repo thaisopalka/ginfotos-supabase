@@ -70,7 +70,37 @@ function generatePassword() {
 }
 
 function makeInviteText(user: AppUser) {
-  return `Olá! Seu acesso ao GINFOTOS 6ª CRE foi criado.\n\nAcesse:\nhttps://ginfotos-supabase.vercel.app\n\nE-mail:\n${user.email}\n\nSenha provisória:\n${user.temporary_password || '[SENHA NÃO INFORMADA]'}`;
+  return `Olá! Seu acesso ao GINFOTOS 6ª CRE foi criado.\n\nAcesse:\nhttps://ginfotos-supabase.vercel.app\n\nE-mail:\n${user.email}\n\nSenha provisória:\n${user.temporary_password || '[SENHA NÃO INFORMADA]'}\n\nAtenciosamente,\nE/6ª CRE/GIN`;
+}
+
+function gmailComposeUrl(user: AppUser) {
+  const params = new URLSearchParams({
+    view: 'cm',
+    fs: '1',
+    to: user.email,
+    su: 'Seu acesso ao GINFOTOS 6ª CRE',
+    body: makeInviteText(user)
+  });
+  return `https://mail.google.com/mail/?${params.toString()}`;
+}
+
+function outlookComposeUrl(user: AppUser) {
+  const params = new URLSearchParams({
+    to: user.email,
+    subject: 'Seu acesso ao GINFOTOS 6ª CRE',
+    body: makeInviteText(user)
+  });
+  return `https://outlook.office.com/mail/deeplink/compose?${params.toString()}`;
+}
+
+function openGmailCompose(user: AppUser, popup?: Window | null) {
+  const url = gmailComposeUrl(user);
+  if (popup && !popup.closed) popup.location.href = url;
+  else window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function openOutlookCompose(user: AppUser) {
+  window.open(outlookComposeUrl(user), '_blank', 'noopener,noreferrer');
 }
 
 function openMailClient(user: AppUser) {
@@ -86,11 +116,7 @@ function mergeUsers(localUsers: AppUser[], remoteUsers: AppUser[]) {
 }
 
 function loadLocalUnidades(): UnidadeAdmin[] {
-  try {
-    return JSON.parse(localStorage.getItem(LOCAL_UNIDADES_KEY) || '[]') as UnidadeAdmin[];
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(localStorage.getItem(LOCAL_UNIDADES_KEY) || '[]') as UnidadeAdmin[]; } catch { return []; }
 }
 
 function saveLocalUnidades(unidades: UnidadeAdmin[]) {
@@ -190,12 +216,8 @@ export default function Admin() {
         setUnidades(merged);
         saveLocalUnidades(merged);
         setUnitMessage(`${data.length} unidade(s) carregada(s) do Supabase e salvas na base local.`);
-      } else if (error) {
-        setUnitMessage(`Supabase não carregou unidades. Base local mantida. ${error.message}`);
-      }
-    } catch {
-      setUnitMessage('Supabase não respondeu. Base local mantida.');
-    }
+      } else if (error) setUnitMessage(`Supabase não carregou unidades. Base local mantida. ${error.message}`);
+    } catch { setUnitMessage('Supabase não respondeu. Base local mantida.'); }
   };
 
   const fetchAdminData = async () => {
@@ -213,15 +235,10 @@ export default function Admin() {
         setAppUsers(merged);
         saveLocalAppUsers(merged);
         setMessage('Usuários carregados. Base local sincronizada.');
-      } else if (appUsersError) {
-        setMessage(`Supabase não carregou usuários. Modo local ativado: ${appUsersError.message}`);
-      }
+      } else if (appUsersError) setMessage(`Supabase não carregou usuários. Modo local ativado: ${appUsersError.message}`);
       if (invitesData) setInvites(invitesData as Invite[]);
-    } catch {
-      setMessage('Supabase não respondeu. Modo local ativado para usuários.');
-    } finally {
-      setLoading(false);
-    }
+    } catch { setMessage('Supabase não respondeu. Modo local ativado para usuários.'); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { fetchAdminData(); }, []);
@@ -238,27 +255,23 @@ export default function Admin() {
     return unidades.filter((item) => [item.designacao, item.name, item.address, item.bairro, item.telefone, item.diretor_geral, item.celular_diretor_geral, item.diretor_adjunto, item.celular_diretor_adjunto].join(' ').toLowerCase().includes(term));
   }, [unidades, unidadeQuery]);
 
-  const sendInviteEmail = async (user: AppUser, useFallback = true) => {
+  const sendInviteEmail = async (user: AppUser, popup?: Window | null) => {
     setSendingInviteId(user.id);
-    setMessage('Enviando convite por e-mail...');
+    setMessage('Tentando enviar convite automático...');
     try {
       const response = await fetch('/api/send-invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: user.email,
-          name: user.name,
-          password: user.temporary_password,
-          inviteText: makeInviteText(user)
-        })
+        body: JSON.stringify({ email: user.email, name: user.name, password: user.temporary_password, inviteText: makeInviteText(user) })
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Não foi possível enviar o convite.');
-      setMessage(`Convite enviado por e-mail para ${user.email}.`);
+      if (popup && !popup.closed) popup.close();
+      setMessage(`Convite enviado automaticamente para ${user.email}.`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Falha ao enviar convite.';
-      setMessage(`${errorMessage} Abrindo o e-mail do computador/celular para envio manual.`);
-      if (useFallback) openMailClient(user);
+      const errorMessage = error instanceof Error ? error.message : 'SMTP não configurado.';
+      setMessage(`${errorMessage} Abri uma janela do Gmail já preenchida. Basta clicar em Enviar.`);
+      openGmailCompose(user, popup);
     } finally {
       setSendingInviteId(null);
     }
@@ -267,25 +280,21 @@ export default function Admin() {
   const handleCreateAppUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage('');
+    const composeWindow = window.open('', '_blank');
+    if (composeWindow) composeWindow.document.write('<p style="font-family:Arial;padding:20px">Preparando convite do GINFOTOS...</p>');
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
-    if (!cleanEmail || !cleanName) { setMessage('Preencha nome e e-mail.'); return; }
+    if (!cleanEmail || !cleanName) { setMessage('Preencha nome e e-mail.'); if (composeWindow) composeWindow.close(); return; }
     const tempPassword = generatePassword();
     const localUser = upsertLocalAppUser({ id: `local-user-${Date.now()}`, email: cleanEmail, name: cleanName, role, status: 'ATIVO', temporary_password: tempPassword, created_by: 'admin' }) as AppUser;
     setAppUsers(mergeUsers([localUser], appUsers));
     setName(''); setEmail(''); setRole('consulta');
     try {
       const { error } = await supabase.from('app_users').insert([{ email: cleanEmail, name: cleanName, role, status: 'ATIVO', temporary_password: tempPassword, created_by: 'admin' }]);
-      if (error) {
-        setMessage(`Usuário criado no modo local. Senha provisória: ${tempPassword}. Supabase falhou: ${error.message}`);
-      } else {
-        setMessage(`Usuário criado e sincronizado. Senha provisória: ${tempPassword}`);
-        fetchAdminData();
-      }
-    } catch {
-      setMessage(`Usuário criado no modo local. Senha provisória: ${tempPassword}.`);
-    }
-    window.setTimeout(() => sendInviteEmail(localUser), 250);
+      if (error) setMessage(`Usuário criado no modo local. Senha provisória: ${tempPassword}. Supabase falhou: ${error.message}`);
+      else { setMessage(`Usuário criado e sincronizado. Senha provisória: ${tempPassword}`); fetchAdminData(); }
+    } catch { setMessage(`Usuário criado no modo local. Senha provisória: ${tempPassword}.`); }
+    sendInviteEmail(localUser, composeWindow);
   };
 
   const handleToggleStatus = async (userId: string, currentStatus: string) => {
@@ -351,10 +360,7 @@ export default function Admin() {
     } catch { /* local ok */ }
   };
 
-  const editUnidadeAdmin = (item: UnidadeAdmin) => {
-    setUnidadeForm(normalizeUnidade(item));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const editUnidadeAdmin = (item: UnidadeAdmin) => { setUnidadeForm(normalizeUnidade(item)); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   const deleteUnidadeAdmin = async (item: UnidadeAdmin) => {
     if (!window.confirm(`Excluir ${item.designacao || ''} - ${item.name}?`)) return;
@@ -367,19 +373,16 @@ export default function Admin() {
 
   return (
     <div className="dashboard-page">
-      <div className="top-row">
-        <div><p className="page-label">Controle de acesso</p><h1>Admin</h1></div>
-        <button type="button" className="empty-button" onClick={fetchAdminData}>Atualizar</button>
-      </div>
+      <div className="top-row"><div><p className="page-label">Controle de acesso</p><h1>Admin</h1></div><button type="button" className="empty-button" onClick={fetchAdminData}>Atualizar</button></div>
 
       <section className="page-card">
         <h2 style={{ marginTop: 0 }}>Criar usuário do app</h2>
-        <p className="page-description">Crie usuários, gere senha provisória e envie o convite de acesso por e-mail. Se o SMTP não estiver configurado, o app abre o e-mail do computador/celular para envio manual.</p>
+        <p className="page-description">Crie usuários, gere senha provisória e envie o convite. Sem SMTP no Vercel, o app abre uma janela do Gmail já preenchida para você clicar em Enviar.</p>
         <form onSubmit={handleCreateAppUser} style={{ display: 'grid', gap: 14, marginTop: 18 }}>
           <div className="field"><label htmlFor="admin-name">Nome</label><input id="admin-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome completo" required /></div>
           <div className="field"><label htmlFor="admin-email">E-mail</label><input id="admin-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="email@exemplo.com" required /></div>
           <div className="field"><label htmlFor="admin-role">Perfil</label><select id="admin-role" value={role} onChange={(event) => setRole(event.target.value)}>{ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
-          <button className="primary large" type="submit">Criar usuário, senha e enviar convite</button>
+          <button className="primary large" type="submit">Criar usuário e abrir convite no Gmail</button>
         </form>
         {message && <p className="notice">{message}</p>}
       </section>
@@ -387,7 +390,7 @@ export default function Admin() {
       <section className="page-card">
         <div className="recent-header"><div><p className="page-label">Usuários cadastrados</p><h2>Usuários do App</h2></div><span className="status-pill">{filteredUsers.length} usuário(s)</span></div>
         <div style={{ display: 'flex', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}><input aria-label="Buscar usuário" placeholder="Buscar por nome, e-mail, perfil ou status" value={query} onChange={(event) => setQuery(event.target.value)} style={{ flex: '1 1 260px' }} /></div>
-        {loading ? <div className="empty-state"><p>Carregando usuários...</p></div> : filteredUsers.length === 0 ? <div className="empty-state"><p>Nenhum usuário encontrado.</p></div> : <div style={{ overflowX: 'auto' }}><table className="table-list"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Status</th><th>Senha provisória</th><th>Ações</th></tr></thead><tbody>{filteredUsers.map((user) => <tr key={user.id}><td>{user.email}</td><td>{user.name || '-'}</td><td>{user.role}</td><td><span className="status-chip">{user.status}</span></td><td>{user.temporary_password || '-'}</td><td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => sendInviteEmail(user)} disabled={sendingInviteId === user.id}>{sendingInviteId === user.id ? 'Enviando...' : 'Enviar e-mail'}</button><button type="button" className="empty-link" onClick={() => openMailClient(user)}>Abrir e-mail</button><button type="button" className="empty-link" onClick={() => handleCopyInvite(user)}>Copiar convite</button><button type="button" className="empty-link" onClick={() => handleResetPassword(user.id)}>Nova senha</button><button type="button" className="empty-link" onClick={() => handleToggleStatus(user.id, user.status)}>{user.status === 'ATIVO' ? 'Bloquear' : 'Ativar'}</button><button type="button" className="empty-link danger-link" onClick={() => handleDeleteAppUser(user.id)}>Remover</button></div></td></tr>)}</tbody></table></div>}
+        {loading ? <div className="empty-state"><p>Carregando usuários...</p></div> : filteredUsers.length === 0 ? <div className="empty-state"><p>Nenhum usuário encontrado.</p></div> : <div style={{ overflowX: 'auto' }}><table className="table-list"><thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Status</th><th>Senha provisória</th><th>Ações</th></tr></thead><tbody>{filteredUsers.map((user) => <tr key={user.id}><td>{user.email}</td><td>{user.name || '-'}</td><td>{user.role}</td><td><span className="status-chip">{user.status}</span></td><td>{user.temporary_password || '-'}</td><td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => sendInviteEmail(user, window.open('', '_blank'))} disabled={sendingInviteId === user.id}>{sendingInviteId === user.id ? 'Enviando...' : 'Enviar/Gmail'}</button><button type="button" className="empty-link" onClick={() => openGmailCompose(user)}>Abrir Gmail</button><button type="button" className="empty-link" onClick={() => openOutlookCompose(user)}>Abrir Outlook</button><button type="button" className="empty-link" onClick={() => openMailClient(user)}>E-mail padrão</button><button type="button" className="empty-link" onClick={() => handleCopyInvite(user)}>Copiar convite</button><button type="button" className="empty-link" onClick={() => handleResetPassword(user.id)}>Nova senha</button><button type="button" className="empty-link" onClick={() => handleToggleStatus(user.id, user.status)}>{user.status === 'ATIVO' ? 'Bloquear' : 'Ativar'}</button><button type="button" className="empty-link danger-link" onClick={() => handleDeleteAppUser(user.id)}>Remover</button></div></td></tr>)}</tbody></table></div>}
       </section>
 
       <section className="page-card">
