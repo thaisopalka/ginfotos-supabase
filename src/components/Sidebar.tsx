@@ -30,7 +30,7 @@ export default function Sidebar({ isAdmin, email, name }: SidebarProps) {
     <div className="sidebar-content">
       <div>
         <div className="brand-block">
-          <img className="brand-logo-img" src="/ginfotos-logo.svg" alt="GINFOTOS 6ª CRE" />
+          <img className="brand-logo-img" src="/logo%20ginfotos.png" alt="GINFOTOS 6ª CRE" />
           <div><p className="brand-title">GINFOTOS 6ª CRE</p><p className="brand-subtitle">DESENVOLVIDO POR THAÍS OPALKA</p></div>
         </div>
         <nav className="app-nav" aria-label="Menu principal">
