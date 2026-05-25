@@ -1,4 +1,5 @@
 const NOTIFICATION_EVENT = 'ginfotos-notification';
+const APP_ICON = '/logo%20ginfotos.png';
 
 function playSound() {
   try {
@@ -31,7 +32,7 @@ export async function notifyGinfotos(title: string, body: string) {
   playSound();
   window.dispatchEvent(new CustomEvent(NOTIFICATION_EVENT, { detail: { title, body } }));
   if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, { body, icon: '/ginfotos-logo.svg', badge: '/ginfotos-logo.svg' });
+    new Notification(title, { body, icon: APP_ICON, badge: APP_ICON });
   }
 }
 
