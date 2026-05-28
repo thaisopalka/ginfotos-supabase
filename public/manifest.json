@@ -1,23 +1,32 @@
 {
+  "id": "/",
   "name": "GINFOTOS 6ª CRE",
   "short_name": "GINFOTOS",
   "description": "Aplicativo de vistorias técnicas, fotos, relatórios e pastas da E/6ª CRE/GIN.",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait-primary",
-  "background_color": "#10243f",
+  "display_override": ["standalone", "browser"],
+  "orientation": "any",
+  "background_color": "#f3f6fb",
   "theme_color": "#10243f",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
       "src": "/logo%20ginfotos.png",
-      "sizes": "1024x1024",
+      "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
       "src": "/logo%20ginfotos.png",
-      "sizes": "1024x1024",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo%20ginfotos.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
