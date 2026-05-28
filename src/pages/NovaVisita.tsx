@@ -3,20 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { UserProfile } from '../App';
 import { appendDictation, startVoiceInput } from '../lib/voiceInput';
 import { fileToCompressedImageDataUrl } from '../lib/fileDataUrl';
-
-interface UnidadeOption {
-  id: string;
-  name: string;
-  address?: string | null;
-  designacao?: string | null;
-  bairro?: string | null;
-  telefone?: string | null;
-  diretor_geral?: string | null;
-  celular_diretor_geral?: string | null;
-  diretor_adjunto?: string | null;
-  celular_diretor_adjunto?: string | null;
-  origem?: string;
-}
+import { fetchSupabaseUnidades, loadLocalUnidades, mergeUnidades, saveLocalUnidades, UnidadeApp } from '../lib/unidadesSource';
 
 interface NovaVisitaProps {
   profile: UserProfile | null;
@@ -54,63 +41,59 @@ interface LocalVisitRecord {
   created_at: string;
 }
 
-const fallbackUnidades: UnidadeOption[] = [
-  { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', origem: 'Base provisoria' },
-  { id: '06-22-001', designacao: '06.22.001', name: 'EM GUILHERME TELL', address: '', bairro: '', origem: 'Base provisoria' },
-  { id: '06-25-000', designacao: '06.25.000', name: 'EM ALZIRO ZARUR', address: '', bairro: '', origem: 'Base provisoria' }
+const fallbackUnidades: UnidadeApp[] = [
+  { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', origem: 'Base provisória' },
+  { id: '06-22-001', designacao: '06.22.001', name: 'EM GUILHERME TELL', address: '', bairro: '', origem: 'Base provisória' },
+  { id: '06-25-000', designacao: '06.25.000', name: 'EM ALZIRO ZARUR', address: '', bairro: '', origem: 'Base provisória' }
 ];
 
 const visitTypes = ['VISTORIA TECNICA', 'INAUGURACAO DE GET', 'VISTORIA GET', 'OBRA', 'OUTROS'];
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
-const LOCAL_UNIDADES_KEY = 'ginfotos_unidades_local';
 
-function loadLocalArray<T>(key: string): T[] {
+function loadLocalVisits(): LocalVisitRecord[] {
   try {
-    return JSON.parse(localStorage.getItem(key) || '[]') as T[];
+    return JSON.parse(localStorage.getItem(LOCAL_VISITS_KEY) || '[]') as LocalVisitRecord[];
   } catch {
     return [];
   }
 }
 
 function saveLocalVisit(record: LocalVisitRecord) {
-  const existing = loadLocalArray<LocalVisitRecord>(LOCAL_VISITS_KEY);
+  const existing = loadLocalVisits();
   const filtered = existing.filter((item) => item.id !== record.id);
-  const compact = [record, ...filtered].slice(0, 40);
-  localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify(compact));
-}
-
-function normalizeUnidade(item: Partial<UnidadeOption>): UnidadeOption {
-  return {
-    id: item.id || `local-${Date.now()}-${Math.random()}`,
-    name: item.name || 'Unidade sem nome',
-    address: item.address || '',
-    designacao: item.designacao || '',
-    bairro: item.bairro || '',
-    telefone: item.telefone || '',
-    diretor_geral: item.diretor_geral || '',
-    celular_diretor_geral: item.celular_diretor_geral || '',
-    diretor_adjunto: item.diretor_adjunto || '',
-    celular_diretor_adjunto: item.celular_diretor_adjunto || '',
-    origem: item.origem || 'Local'
-  };
-}
-
-function mergeUnidades(...groups: UnidadeOption[][]) {
-  const map = new Map<string, UnidadeOption>();
-  groups.flat().forEach((item) => {
-    const normalized = normalizeUnidade(item);
-    const key = (normalized.designacao || normalized.id || normalized.name).toLowerCase();
-    if (!map.has(key)) map.set(key, normalized);
-  });
-  return Array.from(map.values()).sort((a, b) => (a.designacao || a.name).localeCompare(b.designacao || b.name));
+  localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify([record, ...filtered].slice(0, 80)));
 }
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function buildNotes(params: {
+  tipo: string;
+  representante: string;
+  servicos: string;
+  observacoes: string;
+  conclusao: string;
+  selectedUnidade: UnidadeApp;
+}) {
+  const { tipo, representante, servicos, observacoes, conclusao, selectedUnidade } = params;
+  return [
+    `Tipo de visita/obra: ${tipo}`,
+    `Representante E/6 CRE/GIN: ${representante}`,
+    `Servicos verificados: ${servicos || 'Nao informado'}`,
+    `Observacoes: ${observacoes || 'Nao informado'}`,
+    `Conclusao: ${conclusao || 'Nao informado'}`,
+    `Unidade escolar: ${selectedUnidade.name}`,
+    `Designacao: ${selectedUnidade.designacao || 'Nao informado'}`,
+    `Endereco: ${selectedUnidade.address || 'Nao informado'}`,
+    `Bairro: ${selectedUnidade.bairro || 'Nao informado'}`,
+    `Telefone: ${selectedUnidade.telefone || 'Nao informado'}`,
+    `Diretor: ${selectedUnidade.diretor_geral || 'Nao informado'}`
+  ].join('\n');
+}
+
 export default function NovaVisita({ profile }: NovaVisitaProps) {
-  const [unidades, setUnidades] = useState<UnidadeOption[]>(fallbackUnidades);
+  const [unidades, setUnidades] = useState<UnidadeApp[]>(fallbackUnidades);
   const [unidadeId, setUnidadeId] = useState(fallbackUnidades[0].id);
   const [unidadeQuery, setUnidadeQuery] = useState('');
   const [visitDate, setVisitDate] = useState(todayDate());
@@ -126,31 +109,33 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   const captureInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    async function loadUnidades() {
-      const localUnits = loadLocalArray<UnidadeOption>(LOCAL_UNIDADES_KEY).map((item) => ({ ...item, origem: item.origem || 'Local' }));
-      const initialUnits = mergeUnidades(localUnits, fallbackUnidades);
-      setUnidades(initialUnits);
-      setUnidadeId((current) => current || initialUnits[0]?.id || '');
+  const loadUnidades = async () => {
+    const localUnits = loadLocalUnidades<UnidadeApp>();
+    const initialUnits = mergeUnidades(localUnits, fallbackUnidades);
+    setUnidades(initialUnits);
+    setUnidadeId((current) => (initialUnits.some((item) => item.id === current) ? current : initialUnits[0]?.id || ''));
 
-      try {
-        const { data, error } = await supabase
-          .from('unidades')
-          .select('id, name, address, designacao, bairro, telefone, diretor_geral, celular_diretor_geral, diretor_adjunto, celular_diretor_adjunto')
-          .order('name');
-
-        if (!error && data && data.length > 0) {
-          const loaded = (data as UnidadeOption[]).map((item) => ({ ...item, origem: 'Supabase' }));
-          const merged = mergeUnidades(localUnits, loaded, fallbackUnidades);
-          setUnidades(merged);
-          setUnidadeId((current) => (merged.some((item) => item.id === current) ? current : merged[0]?.id || ''));
-        }
-      } catch {
-        setMessage('Base do Supabase nao carregou. A lista local/provisoria continua disponivel.');
-      }
+    const result = await fetchSupabaseUnidades();
+    if (result.unidades.length > 0) {
+      const merged = mergeUnidades(result.unidades, localUnits, fallbackUnidades);
+      setUnidades(merged);
+      saveLocalUnidades(merged);
+      setUnidadeId((current) => (merged.some((item) => item.id === current) ? current : merged[0]?.id || ''));
+      setMessage(`${result.unidades.length} unidade(s) carregada(s) do Supabase (${result.tableName}).`);
+    } else {
+      setMessage(`Base do Supabase não carregou. Motivo: ${result.error || 'sem retorno'}. Mostrando base local/provisória.`);
     }
+  };
 
+  useEffect(() => {
     loadUnidades();
+    const handler = () => loadUnidades();
+    window.addEventListener('ginfotos-unidades-updated', handler);
+    window.addEventListener('storage', handler);
+    return () => {
+      window.removeEventListener('ginfotos-unidades-updated', handler);
+      window.removeEventListener('storage', handler);
+    };
   }, []);
 
   const filteredUnidades = useMemo(() => {
@@ -188,11 +173,32 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     }
   };
 
-  const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
-  const updateCaption = (id: string, caption: string) => setPhotos((current) => current.map((photo) => (photo.id === id ? { ...photo, caption } : photo)));
-  const dictateCaption = (id: string) => { const current = photos.find((photo) => photo.id === id)?.caption || ''; startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus); };
-  const removePhoto = (id: string) => { setPhotos((current) => { const photo = current.find((item) => item.id === id); if (photo) URL.revokeObjectURL(photo.previewUrl); return current.filter((item) => item.id !== id); }); };
+  const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => {
+    addFiles(event.target.files);
+    event.target.value = '';
+  };
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    addFiles(event.target.files);
+    event.target.value = '';
+  };
+
+  const updateCaption = (id: string, caption: string) => {
+    setPhotos((current) => current.map((photo) => (photo.id === id ? { ...photo, caption } : photo)));
+  };
+
+  const dictateCaption = (id: string) => {
+    const current = photos.find((photo) => photo.id === id)?.caption || '';
+    startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus);
+  };
+
+  const removePhoto = (id: string) => {
+    setPhotos((current) => {
+      const photo = current.find((item) => item.id === id);
+      if (photo) URL.revokeObjectURL(photo.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  };
 
   const uploadPhotos = async (visitId: string) => {
     for (const photo of photos) {
@@ -204,31 +210,145 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const resetFormAfterSave = () => {
     photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
-    setPhotos([]); setServicos(''); setObservacoes(''); setConclusao(''); setVisitDate(todayDate()); setTipo(visitTypes[0]);
+    setPhotos([]);
+    setServicos('');
+    setObservacoes('');
+    setConclusao('');
+    setVisitDate(todayDate());
+    setTipo(visitTypes[0]);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedUnidade) { setMessage('Selecione uma unidade escolar.'); return; }
-    setSaving(true); setMessage('Salvando visita...');
+    if (!selectedUnidade) {
+      setMessage('Selecione uma unidade escolar.');
+      return;
+    }
 
-    const notes = [`Tipo de visita/obra: ${tipo}`, `Representante E/6 CRE/GIN: ${representante}`, `Servicos verificados: ${servicos || 'Nao informado'}`, `Observacoes: ${observacoes || 'Nao informado'}`, `Conclusao: ${conclusao || 'Nao informado'}`, `Unidade escolar: ${selectedUnidade.name}`, `Designacao: ${selectedUnidade.designacao || 'Nao informado'}`, `Endereco: ${selectedUnidade.address || 'Nao informado'}`, `Bairro: ${selectedUnidade.bairro || 'Nao informado'}`].join('\n');
+    setSaving(true);
+    setMessage('Salvando visita...');
+
+    const notes = buildNotes({ tipo, representante, servicos, observacoes, conclusao, selectedUnidade });
     const localId = `local-${Date.now()}`;
     let savedId = localId;
     let savedInSupabase = false;
+    let supabaseError = '';
 
     try {
-      const { data, error } = await supabase.from('visitas').insert([{ visitor_name: representante, unidade_id: selectedUnidade.id, visit_date: visitDate, notes, created_by: profile?.id || profile?.email || 'admin' }]).select('id').single();
-      if (!error && data?.id) { savedId = data.id; savedInSupabase = true; await uploadPhotos(savedId); }
-    } catch { savedInSupabase = false; }
+      const { data, error } = await supabase
+        .from('visitas')
+        .insert([{ visitor_name: representante, unidade_id: selectedUnidade.id, visit_date: visitDate, notes, created_by: profile?.id || profile?.email || 'app' }])
+        .select('id')
+        .single();
 
-    saveLocalVisit({ id: savedId, unidade_id: selectedUnidade.id, unidade_nome: selectedUnidade.name, designacao: selectedUnidade.designacao, endereco: selectedUnidade.address, bairro: selectedUnidade.bairro, telefone: selectedUnidade.telefone, diretor_geral: selectedUnidade.diretor_geral, celular_diretor_geral: selectedUnidade.celular_diretor_geral, diretor_adjunto: selectedUnidade.diretor_adjunto, celular_diretor_adjunto: selectedUnidade.celular_diretor_adjunto, visit_date: visitDate, tipo, representante, servicos, observacoes, conclusao, photo_count: photos.length, fotos: photos.map((photo) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl })), created_by: profile?.email, created_at: new Date().toISOString() });
+      if (error) {
+        supabaseError = error.message;
+      } else if (data?.id) {
+        savedId = data.id;
+        savedInSupabase = true;
+        await uploadPhotos(savedId);
+      }
+    } catch (error) {
+      supabaseError = error instanceof Error ? error.message : 'erro desconhecido';
+    }
+
+    saveLocalVisit({
+      id: savedId,
+      unidade_id: selectedUnidade.id,
+      unidade_nome: selectedUnidade.name,
+      designacao: selectedUnidade.designacao,
+      endereco: selectedUnidade.address,
+      bairro: selectedUnidade.bairro,
+      telefone: selectedUnidade.telefone,
+      diretor_geral: selectedUnidade.diretor_geral,
+      celular_diretor_geral: selectedUnidade.celular_diretor_geral,
+      diretor_adjunto: selectedUnidade.diretor_adjunto,
+      celular_diretor_adjunto: selectedUnidade.celular_diretor_adjunto,
+      visit_date: visitDate,
+      tipo,
+      representante,
+      servicos,
+      observacoes,
+      conclusao,
+      photo_count: photos.length,
+      fotos: photos.map((photo) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl })),
+      created_by: profile?.email,
+      created_at: new Date().toISOString()
+    });
+
     window.dispatchEvent(new Event('ginfotos-visitas-updated'));
-    setMessage(savedInSupabase ? 'Visita salva com sucesso. As fotos foram comprimidas e incorporadas ao relatório Word.' : 'Visita salva no dispositivo. As fotos foram comprimidas e incorporadas ao relatório Word.');
-    resetFormAfterSave(); setSaving(false);
+    setMessage(savedInSupabase
+      ? 'Visita salva e sincronizada com todos os usuários. As fotos foram comprimidas para o relatório Word.'
+      : `Visita salva apenas neste dispositivo. Falha na sincronização: ${supabaseError || 'Supabase não respondeu'}.`);
+    resetFormAfterSave();
+    setSaving(false);
   };
 
-  const voiceButton = (onClick: () => void) => <button type="button" className="voice-button" onClick={onClick}>🎤 FALAR E CORRIGIR TEXTO</button>;
+  const voiceButton = (onClick: () => void) => (
+    <button type="button" className="voice-button" onClick={onClick}>🎤 FALAR E CORRIGIR TEXTO</button>
+  );
 
-  return <div className="dashboard-page"><div className="page-card"><p className="page-label">Nova Visita</p><h1 className="page-title">Nova Visita Técnica</h1><p className="page-description">Registre a vistoria, selecione a unidade escolar, descreva os serviços verificados e anexe fotos da visita.</p><form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}><div className="field"><label htmlFor="busca-unidade">Buscar unidade escolar</label><input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designação, unidade, bairro, endereço ou diretor" /></div><div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>{filteredUnidades.map((item) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>{selectedUnidade && <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}><strong>{selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong><p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p><p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p><p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p><p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p><p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p></div>}<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}><div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div><div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item) => <option key={item}>{item}</option>)}</select></div></div><div className="field"><label htmlFor="representante">Representante E/6 CRE/GIN</label><input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required /></div>{voiceStatus && <p className="notice">{voiceStatus}</p>}<div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div><div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div><div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div><div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos serão comprimidas para o app não ficar lento e serão incorporadas ao relatório Word.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div><button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO...' : 'SALVAR VISITA'}</button></form>{message && <p className="notice">{message}</p>}</div></div>;
+  return (
+    <div className="dashboard-page">
+      <div className="page-card">
+        <p className="page-label">Nova Visita</p>
+        <h1 className="page-title">Nova Visita Técnica</h1>
+        <p className="page-description">Registre a vistoria, selecione a unidade escolar, descreva os serviços verificados e anexe fotos da visita.</p>
+        <button type="button" className="empty-button" onClick={loadUnidades}>Atualizar/Sincronizar unidades</button>
+
+        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
+          <div className="field">
+            <label htmlFor="busca-unidade">Buscar unidade escolar</label>
+            <input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designação, unidade, bairro, endereço ou diretor" />
+          </div>
+
+          <div className="field">
+            <label htmlFor="unidade">Unidade Escolar</label>
+            <select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>
+              {filteredUnidades.map((item) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}
+            </select>
+          </div>
+
+          {selectedUnidade && (
+            <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}>
+              <strong>{selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong>
+              <p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p>
+              <p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p>
+              <p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p>
+              <p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p>
+              <p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+            <div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div>
+            <div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item) => <option key={item}>{item}</option>)}</select></div>
+          </div>
+
+          <div className="field"><label htmlFor="representante">Representante E/6 CRE/GIN</label><input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required /></div>
+          {voiceStatus && <p className="notice">{voiceStatus}</p>}
+
+          <div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div>
+          <div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
+          <div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
+
+          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}>
+            <h2 style={{ marginTop: 0 }}>Fotos da visita</h2>
+            <p className="page-description">As fotos serão comprimidas para o app não ficar lento e serão incorporadas ao relatório Word.</p>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>
+              <button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button>
+              <button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button>
+              <span className="status-pill">{photos.length} foto(s)</span>
+            </div>
+            <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} />
+            <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />
+            {photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}
+          </div>
+
+          <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO...' : 'SALVAR VISITA'}</button>
+        </form>
+        {message && <p className="notice">{message}</p>}
+      </div>
+    </div>
+  );
 }
