@@ -25,10 +25,25 @@ export interface UserProfile {
   role?: string;
 }
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+};
+
+function isIOSDevice() {
+  return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+}
+
+function isStandaloneMode() {
+  return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
 function App() {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ title: string; body: string } | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showIosInstall, setShowIosInstall] = useState(false);
   const location = useLocation();
   const isLoginRoute = location.pathname === '/login';
 
@@ -37,17 +52,50 @@ function App() {
     setUser(currentUser);
     setLoading(false);
     requestGinfotosNotificationPermission();
-    return onGinfotosNotification((payload) => {
+
+    const installHandler = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', installHandler);
+
+    if (isIOSDevice() && !isStandaloneMode()) setShowIosInstall(true);
+
+    const unsubscribe = onGinfotosNotification((payload) => {
       setToast(payload);
       window.setTimeout(() => setToast(null), 5000);
     });
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', installHandler);
+      unsubscribe();
+    };
   }, []);
+
+  const handleInstall = async () => {
+    if (installPrompt) {
+      await installPrompt.prompt();
+      await installPrompt.userChoice;
+      setInstallPrompt(null);
+      return;
+    }
+    setShowIosInstall(true);
+  };
 
   const profile: UserProfile = user ? { id: user.email, email: user.email, name: user.name, full_name: user.name, role: user.role } : {};
 
   return (
     <div className={isLoginRoute ? 'public-shell' : 'app-shell'}>
       {!isLoginRoute && <aside className="sidebar-shell"><Sidebar isAdmin={user?.role === 'admin'} email={user?.email} name={user?.name} /></aside>}
+      {!isLoginRoute && (installPrompt || showIosInstall) && !isStandaloneMode() && (
+        <div className="install-banner">
+          <div>
+            <strong>Instalar GINFOTOS</strong>
+            <p>{showIosInstall && !installPrompt ? 'No iPhone/iPad: toque em Compartilhar e depois em “Adicionar à Tela de Início”.' : 'Adicione o app à tela inicial para usar melhor no celular.'}</p>
+          </div>
+          {installPrompt ? <button type="button" onClick={handleInstall}>Adicionar</button> : <button type="button" onClick={() => setShowIosInstall(false)}>Entendi</button>}
+        </div>
+      )}
       <main className={isLoginRoute ? 'login-main' : 'app-main'}>
         {loading ? <div className="page-center">Carregando aplicação…</div> : <>
           <Routes>
