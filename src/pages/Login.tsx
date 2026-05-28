@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { setCurrentUser } from '../lib/session';
 
 const ADMIN_EMAIL = 'thaisopalka@gmail.com';
@@ -23,22 +23,10 @@ async function readLoginResponse(response: Response): Promise<LoginResponse> {
 function friendlyLoginError(status: number, error?: string) {
   const normalized = (error || '').toLowerCase();
 
-  if (status === 404) {
-    return 'O backend de login ainda não foi publicado no Vercel. Faça o redeploy e tente novamente.';
-  }
-
-  if (normalized.includes('supabase') || normalized.includes('configuration') || normalized.includes('configur')) {
-    return 'Login de usuários comuns ainda não está configurado no Vercel. Confira as variáveis SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.';
-  }
-
-  if (status === 401) {
-    return error || 'E-mail ou senha provisória incorretos.';
-  }
-
-  if (status === 403) {
-    return error || 'Usuário bloqueado pela administração.';
-  }
-
+  if (status === 404) return 'O backend de login ainda não foi publicado no Vercel. Faça o redeploy e tente novamente.';
+  if (normalized.includes('supabase') || normalized.includes('configuration') || normalized.includes('configur')) return 'Login pelo Supabase ainda não está configurado. Use um link de acesso direto.';
+  if (status === 401) return error || 'E-mail ou senha provisória incorretos.';
+  if (status === 403) return error || 'Usuário bloqueado pela administração.';
   return error || 'Não foi possível entrar. Confira o e-mail e a senha.';
 }
 
@@ -47,6 +35,29 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('acesso');
+    if (!token) return;
+
+    setMessage('Validando link de acesso...');
+    fetch('/api/magic-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    })
+      .then(async (response) => {
+        const data = await readLoginResponse(response);
+        if (!response.ok || !data.ok || !data.user) throw new Error(data.error || 'Link inválido.');
+        setCurrentUser(data.user);
+        window.location.assign('/');
+      })
+      .catch((error) => {
+        setMessage(error instanceof Error ? error.message : 'Não foi possível entrar pelo link de acesso.');
+        window.history.replaceState({}, document.title, '/login');
+      });
+  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -62,14 +73,8 @@ export default function Login() {
       return;
     }
 
-    // ACESSO EMERGENCIAL - Administradora
     if (trimmedEmail === 'thaisopalka@gmail.com' && password === '12345678') {
-      setCurrentUser({
-        email: 'thaisopalka@gmail.com',
-        name: 'Thaís Opalka',
-        role: 'admin',
-        status: 'ATIVO'
-      });
+      setCurrentUser({ email: 'thaisopalka@gmail.com', name: 'Thaís Opalka', role: 'admin', status: 'ATIVO' });
       window.location.assign('/');
       return;
     }
@@ -101,7 +106,7 @@ export default function Login() {
       }
     } catch (err) {
       console.error('Login error:', err);
-      setMessage('Erro ao conectar ao servidor de login. Verifique se o Vercel foi redeployado e tente novamente.');
+      setMessage('Erro ao conectar ao servidor de login. Tente entrar pelo link de acesso direto.');
       setSubmitting(false);
     }
   };
@@ -115,40 +120,18 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="login-form">
           <label htmlFor="email">E-mail</label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="thaisopalka@gmail.com"
-            autoComplete="email"
-            required
-          />
+          <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="thaisopalka@gmail.com" autoComplete="email" required />
 
           <label htmlFor="password">Senha</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="Digite sua senha"
-            autoComplete="current-password"
-            required
-          />
+          <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Digite sua senha" autoComplete="current-password" required />
 
-          <button className="primary large" type="submit" disabled={submitting}>
-            {submitting ? 'Entrando...' : 'ENTRAR NO GINFOTOS'}
-          </button>
+          <button className="primary large" type="submit" disabled={submitting}>{submitting ? 'Entrando...' : 'ENTRAR NO GINFOTOS'}</button>
         </form>
 
-        <p className="login-desc" style={{ marginTop: 16 }}>
-          Usuários criados no Admin devem entrar com o e-mail cadastrado e a senha provisória copiada no convite.
-        </p>
+        <p className="login-desc" style={{ marginTop: 16 }}>Usuários autorizados também podem entrar pelo link de acesso direto enviado pela administradora.</p>
 
         {message && <p className="notice">{message}</p>}
       </div>
-
-      <div className="login-footer">DESENVOLVIDO POR THAÍS OPALKA</div>
     </div>
   );
 }
