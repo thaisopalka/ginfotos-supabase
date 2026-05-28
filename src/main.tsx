@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './index.css';
 import './layout-fixes.css';
+import './mobile-pwa.css';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
