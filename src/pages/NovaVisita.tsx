@@ -60,7 +60,7 @@ function loadLocalVisits(): LocalVisitRecord[] {
 
 function saveLocalVisit(record: LocalVisitRecord) {
   const existing = loadLocalVisits();
-  const filtered = existing.filter((item) => item.id !== record.id);
+  const filtered = existing.filter((item: LocalVisitRecord) => item.id !== record.id);
   localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify([record, ...filtered].slice(0, 80)));
 }
 
@@ -92,7 +92,13 @@ function buildNotes(params: {
   ].join('\n');
 }
 
-async function saveVisitViaServer(visit: { visitor_name: string; unidade_id: string; visit_date: string; notes: string; created_by: string }) {
+async function saveVisitViaServer(visit: {
+  visitor_name: string;
+  unidade_id: string;
+  visit_date: string;
+  notes: string;
+  created_by: string;
+}) {
   const response = await fetch('/api/visitas', {
     method: 'POST',
     cache: 'no-store',
@@ -123,17 +129,16 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const loadUnidades = async () => {
     const localUnits = loadLocalUnidades<UnidadeApp>();
-    const initialUnits = mergeUnidades(localUnits, fallbackUnidades);
+    const initialUnits = mergeUnidades(localUnits, fallbackUnidades) as UnidadeApp[];
     setUnidades(initialUnits);
-    setUnidadeId((current) => (initialUnits.some((item) => item.id === current) ? current : initialUnits[0]?.id || ''));
+    setUnidadeId((current) => (initialUnits.some((item: UnidadeApp) => item.id === current) ? current : initialUnits[0]?.id || ''));
 
     const result = await fetchSupabaseUnidades();
     if (result.unidades.length > 0) {
-      // No celular, a base oficial precisa substituir a base local antiga para sair das 3 unidades provisórias.
-      const officialUnits = result.unidades;
+      const officialUnits = result.unidades as UnidadeApp[];
       setUnidades(officialUnits);
       saveLocalUnidades(officialUnits);
-      setUnidadeId((current) => (officialUnits.some((item) => item.id === current) ? current : officialUnits[0]?.id || ''));
+      setUnidadeId((current) => (officialUnits.some((item: UnidadeApp) => item.id === current) ? current : officialUnits[0]?.id || ''));
       setMessage(`${result.unidades.length} unidade(s) atualizada(s) do Supabase (${result.tableName}).`);
     } else {
       setMessage(`Base do Supabase não carregou. Motivo: ${result.error || 'sem retorno'}. Mostrando base local/provisória.`);
@@ -154,7 +159,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   const filteredUnidades = useMemo(() => {
     const term = unidadeQuery.trim().toLowerCase();
     if (!term) return unidades;
-    return unidades.filter((item) =>
+    return unidades.filter((item: UnidadeApp) =>
       [item.designacao, item.name, item.address, item.bairro, item.telefone, item.diretor_geral, item.diretor_adjunto]
         .join(' ')
         .toLowerCase()
@@ -163,16 +168,15 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   }, [unidadeQuery, unidades]);
 
   const selectedUnidade = useMemo(
-    () => unidades.find((item) => item.id === unidadeId) || filteredUnidades[0] || unidades[0],
+    () => unidades.find((item: UnidadeApp) => item.id === unidadeId) || filteredUnidades[0] || unidades[0],
     [unidadeId, unidades, filteredUnidades]
   );
 
   const addFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setMessage('Comprimindo fotos para evitar lentidão e preparar o relatório Word...');
-
     try {
-      const newPhotos = await Promise.all(Array.from(files).map(async (file) => ({
+      const newPhotos = await Promise.all(Array.from(files).map(async (file: File) => ({
         id: `${Date.now()}-${file.name}-${Math.random()}`,
         file,
         previewUrl: URL.createObjectURL(file),
@@ -188,9 +192,16 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
-  const updateCaption = (id: string, caption: string) => setPhotos((current) => current.map((photo) => (photo.id === id ? { ...photo, caption } : photo)));
-  const dictateCaption = (id: string) => { const current = photos.find((photo) => photo.id === id)?.caption || ''; startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus); };
-  const removePhoto = (id: string) => setPhotos((current) => { const photo = current.find((item) => item.id === id); if (photo) URL.revokeObjectURL(photo.previewUrl); return current.filter((item) => item.id !== id); });
+  const updateCaption = (id: string, caption: string) => setPhotos((current) => current.map((photo: PhotoItem) => (photo.id === id ? { ...photo, caption } : photo)));
+  const dictateCaption = (id: string) => {
+    const current = photos.find((photo: PhotoItem) => photo.id === id)?.caption || '';
+    startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus);
+  };
+  const removePhoto = (id: string) => setPhotos((current) => {
+    const photo = current.find((item: PhotoItem) => item.id === id);
+    if (photo) URL.revokeObjectURL(photo.previewUrl);
+    return current.filter((item: PhotoItem) => item.id !== id);
+  });
 
   const uploadPhotos = async (visitId: string) => {
     for (const photo of photos) {
@@ -201,7 +212,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   };
 
   const resetFormAfterSave = () => {
-    photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+    photos.forEach((photo: PhotoItem) => URL.revokeObjectURL(photo.previewUrl));
     setPhotos([]);
     setServicos('');
     setObservacoes('');
@@ -223,7 +234,13 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     let savedInSupabase = false;
     let supabaseError = '';
 
-    const visitRecord = { visitor_name: representante, unidade_id: selectedUnidade.id, visit_date: visitDate, notes, created_by: profile?.id || profile?.email || 'app' };
+    const visitRecord = {
+      visitor_name: representante,
+      unidade_id: selectedUnidade.id,
+      visit_date: visitDate,
+      notes,
+      created_by: profile?.id || profile?.email || 'app'
+    };
 
     try {
       const serverId = await saveVisitViaServer(visitRecord);
@@ -237,7 +254,11 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       try {
         const { data, error } = await supabase.from('visitas').insert([visitRecord]).select('id').single();
         if (error) supabaseError = `${supabaseError} | Supabase direto: ${error.message}`;
-        else if (data?.id) { savedId = data.id; savedInSupabase = true; try { await uploadPhotos(savedId); } catch { /* ignora foto */ } }
+        else if (data?.id) {
+          savedId = data.id;
+          savedInSupabase = true;
+          try { await uploadPhotos(savedId); } catch { /* ignora foto */ }
+        }
       } catch (error) {
         supabaseError = `${supabaseError} | ${error instanceof Error ? error.message : 'erro desconhecido'}`;
       }
@@ -262,7 +283,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       observacoes,
       conclusao,
       photo_count: photos.length,
-      fotos: photos.map((photo) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl })),
+      fotos: photos.map((photo: PhotoItem) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl })),
       created_by: profile?.email,
       created_at: new Date().toISOString()
     });
@@ -287,15 +308,15 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
           <div className="field"><label htmlFor="busca-unidade">Buscar unidade escolar</label><input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designação, unidade, bairro, endereço ou diretor" /></div>
-          <div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>{filteredUnidades.map((item) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>
+          <div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>{filteredUnidades.map((item: UnidadeApp) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>
           {selectedUnidade && <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}><strong>{selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong><p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p><p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p><p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p><p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p><p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p></div>}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}><div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div><div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item) => <option key={item}>{item}</option>)}</select></div></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}><div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div><div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item: string) => <option key={item}>{item}</option>)}</select></div></div>
           <div className="field"><label htmlFor="representante">Representante E/6 CRE/GIN</label><input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required /></div>
           {voiceStatus && <p className="notice">{voiceStatus}</p>}
           <div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div>
           <div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
           <div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
-          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos serão comprimidas para o app não ficar lento e serão incorporadas ao relatório Word.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
+          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos serão comprimidas para o app não ficar lento e serão incorporadas ao relatório Word.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
           <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO...' : 'SALVAR VISITA'}</button>
         </form>
         {message && <p className="notice">{message}</p>}
