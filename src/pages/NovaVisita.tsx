@@ -92,6 +92,18 @@ function buildNotes(params: {
   ].join('\n');
 }
 
+async function saveVisitViaServer(visit: { visitor_name: string; unidade_id: string; visit_date: string; notes: string; created_by: string }) {
+  const response = await fetch('/api/visitas', {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+    body: JSON.stringify({ visit })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'API /api/visitas não salvou a visita.');
+  return payload.visit?.id as string | undefined;
+}
+
 export default function NovaVisita({ profile }: NovaVisitaProps) {
   const [unidades, setUnidades] = useState<UnidadeApp[]>(fallbackUnidades);
   const [unidadeId, setUnidadeId] = useState(fallbackUnidades[0].id);
@@ -117,11 +129,12 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
     const result = await fetchSupabaseUnidades();
     if (result.unidades.length > 0) {
-      const merged = mergeUnidades(result.unidades, localUnits, fallbackUnidades);
-      setUnidades(merged);
-      saveLocalUnidades(merged);
-      setUnidadeId((current) => (merged.some((item) => item.id === current) ? current : merged[0]?.id || ''));
-      setMessage(`${result.unidades.length} unidade(s) carregada(s) do Supabase (${result.tableName}).`);
+      // No celular, a base oficial precisa substituir a base local antiga para sair das 3 unidades provisórias.
+      const officialUnits = result.unidades;
+      setUnidades(officialUnits);
+      saveLocalUnidades(officialUnits);
+      setUnidadeId((current) => (officialUnits.some((item) => item.id === current) ? current : officialUnits[0]?.id || ''));
+      setMessage(`${result.unidades.length} unidade(s) atualizada(s) do Supabase (${result.tableName}).`);
     } else {
       setMessage(`Base do Supabase não carregou. Motivo: ${result.error || 'sem retorno'}. Mostrando base local/provisória.`);
     }
@@ -173,32 +186,11 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     }
   };
 
-  const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => {
-    addFiles(event.target.files);
-    event.target.value = '';
-  };
-
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    addFiles(event.target.files);
-    event.target.value = '';
-  };
-
-  const updateCaption = (id: string, caption: string) => {
-    setPhotos((current) => current.map((photo) => (photo.id === id ? { ...photo, caption } : photo)));
-  };
-
-  const dictateCaption = (id: string) => {
-    const current = photos.find((photo) => photo.id === id)?.caption || '';
-    startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus);
-  };
-
-  const removePhoto = (id: string) => {
-    setPhotos((current) => {
-      const photo = current.find((item) => item.id === id);
-      if (photo) URL.revokeObjectURL(photo.previewUrl);
-      return current.filter((item) => item.id !== id);
-    });
-  };
+  const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
+  const updateCaption = (id: string, caption: string) => setPhotos((current) => current.map((photo) => (photo.id === id ? { ...photo, caption } : photo)));
+  const dictateCaption = (id: string) => { const current = photos.find((photo) => photo.id === id)?.caption || ''; startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus); };
+  const removePhoto = (id: string) => setPhotos((current) => { const photo = current.find((item) => item.id === id); if (photo) URL.revokeObjectURL(photo.previewUrl); return current.filter((item) => item.id !== id); });
 
   const uploadPhotos = async (visitId: string) => {
     for (const photo of photos) {
@@ -220,10 +212,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedUnidade) {
-      setMessage('Selecione uma unidade escolar.');
-      return;
-    }
+    if (!selectedUnidade) { setMessage('Selecione uma unidade escolar.'); return; }
 
     setSaving(true);
     setMessage('Salvando visita...');
@@ -234,22 +223,24 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     let savedInSupabase = false;
     let supabaseError = '';
 
-    try {
-      const { data, error } = await supabase
-        .from('visitas')
-        .insert([{ visitor_name: representante, unidade_id: selectedUnidade.id, visit_date: visitDate, notes, created_by: profile?.id || profile?.email || 'app' }])
-        .select('id')
-        .single();
+    const visitRecord = { visitor_name: representante, unidade_id: selectedUnidade.id, visit_date: visitDate, notes, created_by: profile?.id || profile?.email || 'app' };
 
-      if (error) {
-        supabaseError = error.message;
-      } else if (data?.id) {
-        savedId = data.id;
+    try {
+      const serverId = await saveVisitViaServer(visitRecord);
+      if (serverId) {
+        savedId = serverId;
         savedInSupabase = true;
-        await uploadPhotos(savedId);
+        try { await uploadPhotos(savedId); } catch { /* salva texto mesmo se foto falhar */ }
       }
-    } catch (error) {
-      supabaseError = error instanceof Error ? error.message : 'erro desconhecido';
+    } catch (serverError) {
+      supabaseError = serverError instanceof Error ? serverError.message : 'API /api/visitas falhou';
+      try {
+        const { data, error } = await supabase.from('visitas').insert([visitRecord]).select('id').single();
+        if (error) supabaseError = `${supabaseError} | Supabase direto: ${error.message}`;
+        else if (data?.id) { savedId = data.id; savedInSupabase = true; try { await uploadPhotos(savedId); } catch { /* ignora foto */ } }
+      } catch (error) {
+        supabaseError = `${supabaseError} | ${error instanceof Error ? error.message : 'erro desconhecido'}`;
+      }
     }
 
     saveLocalVisit({
@@ -278,15 +269,13 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
     window.dispatchEvent(new Event('ginfotos-visitas-updated'));
     setMessage(savedInSupabase
-      ? 'Visita salva e sincronizada com todos os usuários. As fotos foram comprimidas para o relatório Word.'
-      : `Visita salva apenas neste dispositivo. Falha na sincronização: ${supabaseError || 'Supabase não respondeu'}.`);
+      ? 'Visita salva e sincronizada com todos os usuários. As fotos foram preparadas para o relatório Word.'
+      : `Visita salva apenas neste celular. Falha na sincronização: ${supabaseError || 'Supabase não respondeu'}.`);
     resetFormAfterSave();
     setSaving(false);
   };
 
-  const voiceButton = (onClick: () => void) => (
-    <button type="button" className="voice-button" onClick={onClick}>🎤 FALAR E CORRIGIR TEXTO</button>
-  );
+  const voiceButton = (onClick: () => void) => <button type="button" className="voice-button" onClick={onClick}>🎤 FALAR E CORRIGIR TEXTO</button>;
 
   return (
     <div className="dashboard-page">
@@ -294,57 +283,19 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
         <p className="page-label">Nova Visita</p>
         <h1 className="page-title">Nova Visita Técnica</h1>
         <p className="page-description">Registre a vistoria, selecione a unidade escolar, descreva os serviços verificados e anexe fotos da visita.</p>
-        <button type="button" className="empty-button" onClick={loadUnidades}>Atualizar/Sincronizar unidades</button>
+        <button type="button" className="empty-button" onClick={loadUnidades}>Atualizar/Sincronizar 115 unidades</button>
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
-          <div className="field">
-            <label htmlFor="busca-unidade">Buscar unidade escolar</label>
-            <input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designação, unidade, bairro, endereço ou diretor" />
-          </div>
-
-          <div className="field">
-            <label htmlFor="unidade">Unidade Escolar</label>
-            <select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>
-              {filteredUnidades.map((item) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}
-            </select>
-          </div>
-
-          {selectedUnidade && (
-            <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}>
-              <strong>{selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong>
-              <p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p>
-              <p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p>
-              <p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p>
-              <p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p>
-              <p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p>
-            </div>
-          )}
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-            <div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div>
-            <div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item) => <option key={item}>{item}</option>)}</select></div>
-          </div>
-
+          <div className="field"><label htmlFor="busca-unidade">Buscar unidade escolar</label><input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designação, unidade, bairro, endereço ou diretor" /></div>
+          <div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>{filteredUnidades.map((item) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>
+          {selectedUnidade && <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}><strong>{selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong><p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p><p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p><p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p><p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p><p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p></div>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}><div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div><div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item) => <option key={item}>{item}</option>)}</select></div></div>
           <div className="field"><label htmlFor="representante">Representante E/6 CRE/GIN</label><input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required /></div>
           {voiceStatus && <p className="notice">{voiceStatus}</p>}
-
           <div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div>
           <div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
           <div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
-
-          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}>
-            <h2 style={{ marginTop: 0 }}>Fotos da visita</h2>
-            <p className="page-description">As fotos serão comprimidas para o app não ficar lento e serão incorporadas ao relatório Word.</p>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>
-              <button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button>
-              <button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button>
-              <span className="status-pill">{photos.length} foto(s)</span>
-            </div>
-            <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} />
-            <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />
-            {photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}
-          </div>
-
+          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos serão comprimidas para o app não ficar lento e serão incorporadas ao relatório Word.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
           <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO...' : 'SALVAR VISITA'}</button>
         </form>
         {message && <p className="notice">{message}</p>}
