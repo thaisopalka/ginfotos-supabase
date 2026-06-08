@@ -23,6 +23,17 @@ function normalizeVisit(row) {
   };
 }
 
+function appendPhotosToNotes(notes, photos) {
+  if (!Array.isArray(photos) || photos.length === 0) return notes;
+  const compact = photos.slice(0, 8).map((photo, index) => ({
+    name: clean(photo.name || `foto-${index + 1}.jpg`),
+    caption: clean(photo.caption || ''),
+    dataUrl: clean(photo.dataUrl || '')
+  })).filter((photo) => photo.dataUrl);
+  if (compact.length === 0) return notes;
+  return `${notes || ''}\nGINFOTOS_JSON:${JSON.stringify({ fotos: compact })}`;
+}
+
 export default async function handler(req, res) {
   const supabase = getSupabase();
   if (!supabase) return res.status(500).json({ error: 'SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente no Vercel.' });
@@ -45,7 +56,7 @@ export default async function handler(req, res) {
       visitor_name: clean(visit.visitor_name || visit.representante || 'ENGA. MARCIA BRAGA'),
       unidade_id: clean(visit.unidade_id || visit.designacao || ''),
       visit_date: clean(visit.visit_date || new Date().toISOString().slice(0, 10)),
-      notes: clean(visit.notes || ''),
+      notes: appendPhotosToNotes(clean(visit.notes || ''), visit.photos || visit.fotos || []),
       created_by: clean(visit.created_by || 'app')
     };
 
