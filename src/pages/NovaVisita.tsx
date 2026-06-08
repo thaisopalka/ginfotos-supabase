@@ -98,6 +98,7 @@ async function saveVisitViaServer(visit: {
   visit_date: string;
   notes: string;
   created_by: string;
+  photos: { name: string; caption: string; dataUrl?: string }[];
 }) {
   const response = await fetch('/api/visitas', {
     method: 'POST',
@@ -174,19 +175,19 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const addFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    setMessage('Comprimindo fotos para evitar lentidão e preparar o relatório Word...');
+    setMessage('Comprimindo fotos para salvar no relatório e sincronizar no app...');
     try {
-      const newPhotos = await Promise.all(Array.from(files).map(async (file: File) => ({
+      const newPhotos = await Promise.all(Array.from(files).slice(0, 8).map(async (file: File) => ({
         id: `${Date.now()}-${file.name}-${Math.random()}`,
         file,
         previewUrl: URL.createObjectURL(file),
         dataUrl: await fileToCompressedImageDataUrl(file),
         caption: ''
       })));
-      setPhotos((current) => [...current, ...newPhotos]);
-      setMessage(`${newPhotos.length} foto(s) comprimida(s) e pronta(s) para aparecer no relatório Word.`);
+      setPhotos((current) => [...current, ...newPhotos].slice(0, 8));
+      setMessage(`${newPhotos.length} foto(s) salva(s) temporariamente. Ao clicar em SALVAR VISITA, elas serão sincronizadas para todos.`);
     } catch {
-      setMessage('Não foi possível incorporar uma ou mais fotos. Tente anexar novamente.');
+      setMessage('Não foi possível salvar uma ou mais fotos. Tente anexar novamente.');
     }
   };
 
@@ -203,14 +204,6 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     return current.filter((item: PhotoItem) => item.id !== id);
   });
 
-  const uploadPhotos = async (visitId: string) => {
-    for (const photo of photos) {
-      const safeName = photo.file.name.replace(/[^a-zA-Z0-9_.-]/g, '-');
-      const filePath = `${visitId}/${Date.now()}-${safeName}`;
-      await supabase.storage.from('visita-fotos').upload(filePath, photo.file, { cacheControl: '3600', upsert: true });
-    }
-  };
-
   const resetFormAfterSave = () => {
     photos.forEach((photo: PhotoItem) => URL.revokeObjectURL(photo.previewUrl));
     setPhotos([]);
@@ -226,20 +219,22 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     if (!selectedUnidade) { setMessage('Selecione uma unidade escolar.'); return; }
 
     setSaving(true);
-    setMessage('Salvando visita...');
+    setMessage('Salvando visita e fotos...');
 
     const notes = buildNotes({ tipo, representante, servicos, observacoes, conclusao, selectedUnidade });
     const localId = `local-${Date.now()}`;
     let savedId = localId;
     let savedInSupabase = false;
     let supabaseError = '';
+    const compactPhotos = photos.map((photo: PhotoItem) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl }));
 
     const visitRecord = {
       visitor_name: representante,
       unidade_id: selectedUnidade.id,
       visit_date: visitDate,
       notes,
-      created_by: profile?.id || profile?.email || 'app'
+      created_by: profile?.id || profile?.email || 'app',
+      photos: compactPhotos
     };
 
     try {
@@ -247,17 +242,16 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       if (serverId) {
         savedId = serverId;
         savedInSupabase = true;
-        try { await uploadPhotos(savedId); } catch { /* salva texto mesmo se foto falhar */ }
       }
     } catch (serverError) {
       supabaseError = serverError instanceof Error ? serverError.message : 'API /api/visitas falhou';
       try {
-        const { data, error } = await supabase.from('visitas').insert([visitRecord]).select('id').single();
+        const notesWithPhotos = compactPhotos.length ? `${notes}\nGINFOTOS_JSON:${JSON.stringify({ fotos: compactPhotos })}` : notes;
+        const { data, error } = await supabase.from('visitas').insert([{ ...visitRecord, notes: notesWithPhotos }]).select('id').single();
         if (error) supabaseError = `${supabaseError} | Supabase direto: ${error.message}`;
         else if (data?.id) {
           savedId = data.id;
           savedInSupabase = true;
-          try { await uploadPhotos(savedId); } catch { /* ignora foto */ }
         }
       } catch (error) {
         supabaseError = `${supabaseError} | ${error instanceof Error ? error.message : 'erro desconhecido'}`;
@@ -282,16 +276,16 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       servicos,
       observacoes,
       conclusao,
-      photo_count: photos.length,
-      fotos: photos.map((photo: PhotoItem) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl })),
+      photo_count: compactPhotos.length,
+      fotos: compactPhotos,
       created_by: profile?.email,
       created_at: new Date().toISOString()
     });
 
     window.dispatchEvent(new Event('ginfotos-visitas-updated'));
     setMessage(savedInSupabase
-      ? 'Visita salva e sincronizada com todos os usuários. As fotos foram preparadas para o relatório Word.'
-      : `Visita salva apenas neste celular. Falha na sincronização: ${supabaseError || 'Supabase não respondeu'}.`);
+      ? `Visita salva e sincronizada com ${compactPhotos.length} foto(s). Abra Visitas Técnicas e clique em Atualizar visitas.`
+      : `Visita salva apenas neste celular com ${compactPhotos.length} foto(s). Falha na sincronização: ${supabaseError || 'Supabase não respondeu'}.`);
     resetFormAfterSave();
     setSaving(false);
   };
@@ -316,7 +310,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
           <div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div>
           <div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
           <div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
-          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos serão comprimidas para o app não ficar lento e serão incorporadas ao relatório Word.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
+          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos serão reduzidas automaticamente para salvar no celular, aparecer no relatório e sincronizar para o computador.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
           <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO...' : 'SALVAR VISITA'}</button>
         </form>
         {message && <p className="notice">{message}</p>}
