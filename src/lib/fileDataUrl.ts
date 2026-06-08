@@ -7,7 +7,7 @@ export async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-export async function fileToCompressedImageDataUrl(file: File, maxWidth = 1100, quality = 0.78): Promise<string> {
+export async function fileToCompressedImageDataUrl(file: File, maxWidth = 820, quality = 0.68): Promise<string> {
   const originalDataUrl = await fileToDataUrl(file);
   if (!file.type.startsWith('image/')) return originalDataUrl;
 
