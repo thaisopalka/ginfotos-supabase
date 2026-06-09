@@ -1,25 +1,16 @@
 /* Correcoes especificas para celular e instalacao PWA */
 
-.install-banner {
-  position: fixed;
-  left: 50%;
-  bottom: 18px;
-  z-index: 10000;
-  width: min(92vw, 560px);
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: #10243f;
-  color: #ffffff;
-  box-shadow: 0 22px 54px rgba(15, 23, 42, 0.28);
-}
-
+.install-banner { position: fixed; left: 50%; bottom: 18px; z-index: 10000; width: min(92vw, 560px); transform: translateX(-50%); display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; border-radius: 18px; background: #10243f; color: #ffffff; box-shadow: 0 22px 54px rgba(15, 23, 42, 0.28); }
 .install-banner p { margin: 4px 0 0; color: rgba(255,255,255,.78); font-size: .88rem; line-height: 1.35; }
 .install-banner button { border: 0; border-radius: 14px; padding: 12px 14px; background: #fff; color: #10243f; font-weight: 900; white-space: nowrap; }
+
+.sync-strong, .voice-button, button.primary, .empty-button { font-weight: 900 !important; letter-spacing: .03em !important; box-shadow: 0 12px 26px rgba(49, 95, 201, .22) !important; }
+.sync-strong { background: linear-gradient(90deg, #0f766e, #2563eb) !important; color: #fff !important; }
+.voice-button { border: 0 !important; border-radius: 14px !important; padding: 14px 18px !important; background: linear-gradient(90deg, #7c3aed, #2563eb) !important; color: #fff !important; }
+.visit-photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 18px; }
+.visit-photo-card { margin: 0; padding: 12px; border: 1px solid #dce3ec; border-radius: 18px; background: #f8fafc; }
+.visit-photo-card img { display: block; width: 100%; max-height: 360px; object-fit: contain; border-radius: 14px; background: #fff; }
+.visit-photo-card figcaption { margin-top: 10px; color: #334155; font-weight: 700; }
 
 @media (max-width: 1024px), (pointer: coarse) {
   html, body, #root { width: 100% !important; min-width: 0 !important; min-height: 100% !important; overflow-x: hidden !important; }
@@ -41,7 +32,7 @@
   .hero-panel { padding: 20px 16px !important; border-radius: 20px !important; }
   .hero-panel h2 { font-size: 1.7rem !important; }
   .hero-actions, .top-actions { display: grid !important; grid-template-columns: 1fr !important; width: 100% !important; }
-  .hero-button, .empty-button, button.primary, .voice-button { width: 100% !important; min-height: 48px !important; }
+  .hero-button, .empty-button, button.primary, .voice-button { width: 100% !important; min-height: 52px !important; font-size: 16px !important; }
   .stats-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
   input, select, textarea, button { font-size: 16px !important; }
   input, select, textarea { min-height: 48px !important; max-width: 100% !important; box-sizing: border-box !important; }
@@ -54,7 +45,4 @@
   .install-banner { bottom: calc(104px + env(safe-area-inset-bottom)) !important; width: calc(100vw - 20px) !important; align-items: flex-start !important; }
 }
 
-@media (max-width: 390px) {
-  .sidebar-link { font-size: .61rem !important; min-width: 68px !important; }
-  .nav-icon { width: 26px !important; height: 26px !important; min-width: 26px !important; min-height: 26px !important; }
-}
+@media (max-width: 390px) { .sidebar-link { font-size: .61rem !important; min-width: 68px !important; } .nav-icon { width: 26px !important; height: 26px !important; min-width: 26px !important; min-height: 26px !important; } }
