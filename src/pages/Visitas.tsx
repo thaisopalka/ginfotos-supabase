@@ -83,7 +83,7 @@ function saveLocalVisits(visits: LocalVisitRecord[]) {
       ...visit,
       fotos: (visit.fotos || []).map((photo) => ({ name: photo.name, caption: photo.caption }))
     }));
-    try { localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify(compact)); } catch { /* sem espaço local */ }
+    try { localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify(compact)); } catch { /* sem espaco local */ }
   }
   window.dispatchEvent(new Event('ginfotos-visitas-updated'));
 }
@@ -200,14 +200,21 @@ function toLocalRecord(visit: UnifiedVisit, original?: LocalVisitRecord): LocalV
   } as LocalVisitRecord;
 }
 
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+  if (!text) return {} as Record<string, unknown>;
+  try { return JSON.parse(text) as Record<string, unknown>; }
+  catch { throw new Error(`Servidor devolveu resposta inválida (${response.status}).`); }
+}
+
 async function fetchRemoteVisits() {
   const response = await fetch(`/api/visitas?ts=${Date.now()}`, {
     method: 'GET',
     cache: 'no-store',
     headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Servidor de visitas não respondeu.');
+  const payload = await readJsonResponse(response);
+  if (!response.ok) throw new Error(String(payload.error || `Servidor de visitas respondeu ${response.status}.`));
   return (Array.isArray(payload.data) ? payload.data : []) as ApiVisit[];
 }
 
@@ -217,12 +224,12 @@ async function fetchRemoteVisitDetail(id: string) {
     cache: 'no-store',
     headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload.visit) throw new Error(payload.error || 'Não foi possível abrir a visita.');
+  const payload = await readJsonResponse(response);
+  if (!response.ok || !payload.visit) throw new Error(String(payload.error || 'Não foi possível abrir a visita.'));
   return payload.visit as ApiVisit;
 }
 
-async function pushPendingVisit(visit: LocalVisitRecord) {
+async function createRemoteVisit(visit: LocalVisitRecord) {
   const response = await fetch('/api/visitas', {
     method: 'POST',
     cache: 'no-store',
@@ -233,14 +240,38 @@ async function pushPendingVisit(visit: LocalVisitRecord) {
         unidade_id: visit.unidade_id,
         visit_date: visit.visit_date,
         notes: buildNotesFromLocal(visit),
-        created_by: visit.created_by || 'app',
-        photos: visit.fotos || []
+        created_by: visit.created_by || 'app'
       }
     })
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload.visit?.id) throw new Error(payload.error || 'Falha ao enviar visita pendente.');
+  const payload = await readJsonResponse(response);
+  if (!response.ok || !payload.visit) throw new Error(String(payload.error || 'Falha ao enviar a visita.'));
   return payload.visit as ApiVisit;
+}
+
+async function uploadPhotoToRemoteVisit(visitId: string, photo: SavedPhoto) {
+  if (!photo.dataUrl) return null;
+  const response = await fetch(`/api/visitas?action=add-photo&id=${encodeURIComponent(visitId)}&ts=${Date.now()}`, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+    body: JSON.stringify({ photo: { name: photo.name, caption: photo.caption || '', dataUrl: photo.dataUrl } })
+  });
+  const payload = await readJsonResponse(response);
+  if (!response.ok) throw new Error(String(payload.error || `Falha ao enviar a foto ${photo.name}.`));
+  return payload.visit as ApiVisit | undefined;
+}
+
+async function pushPendingVisit(visit: LocalVisitRecord) {
+  let remote = await createRemoteVisit(visit);
+  const photos = (visit.fotos || []).filter((photo) => !!photo.dataUrl);
+
+  for (const photo of photos) {
+    const updated = await uploadPhotoToRemoteVisit(remote.id, photo);
+    if (updated) remote = updated;
+  }
+
+  return { ...remote, photo_count: photos.length || remote.photo_count || 0 } as ApiVisit;
 }
 
 async function synchronizePendingLocals(localVisits: LocalVisitRecord[]) {
@@ -283,11 +314,22 @@ export default function Visitas({ profile }: VisitasProps) {
     setMessage('Sincronizando visitas e fotos com todos os usuários...');
 
     const pendingResult = await synchronizePendingLocals(loadLocalVisits());
-    const localVisits = pendingResult.visits.map(fromLocal);
+    const localRecords = pendingResult.visits;
+    const localVisits = localRecords.map(fromLocal);
 
     try {
       const remoteRows = await fetchRemoteVisits();
-      const remoteVisits = remoteRows.map(fromApi);
+      const localById = new Map(localVisits.map((item) => [item.id, item]));
+      const remoteVisits = remoteRows.map((row) => {
+        const remote = fromApi(row);
+        const local = localById.get(remote.id);
+        if (local) {
+          if (!remote.unidade || remote.unidade === remote.designacao) remote.unidade = local.unidade;
+          if (remote.designacao === '—') remote.designacao = local.designacao;
+          if (remote.fotos === 0 && local.fotos > 0) remote.fotos = local.fotos;
+        }
+        return remote;
+      });
       const remoteIds = new Set(remoteVisits.map((item) => item.id));
       const onlyLocal = localVisits.filter((item) => !remoteIds.has(item.id));
       const merged = [...remoteVisits, ...onlyLocal].sort((a, b) => (b.data || '').localeCompare(a.data || ''));
@@ -335,6 +377,8 @@ export default function Visitas({ profile }: VisitasProps) {
         remote.fotosLista = local.fotos;
         remote.fotos = local.photo_count || local.fotos.length;
       }
+      if ((!remote.unidade || remote.unidade === remote.designacao) && visit.unidade) remote.unidade = visit.unidade;
+      if (remote.designacao === '—') remote.designacao = visit.designacao;
       return remote;
     } catch {
       return visit;
@@ -428,7 +472,7 @@ export default function Visitas({ profile }: VisitasProps) {
               <tbody>{filtered.map((item) => (
                 <tr key={`${item.source}-${item.id}`}>
                   <td>{formatDate(item.data)}</td><td>{item.designacao}</td><td>{item.unidade}</td><td>{item.tipo}</td>
-                  <td><span className="status-chip">{item.status}</span></td><td>{item.fotos}</td>
+                  <td><span className="status-chip">{item.status}</span></td><td>{item.fotos || '—'}</td>
                   <td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button type="button" className="primary" onClick={() => openVisit(item)}>ABRIR</button>
                     <button type="button" className="empty-link" onClick={() => navigate('/relatorios')}>Gerar Word</button>
