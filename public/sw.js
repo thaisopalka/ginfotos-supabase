@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ginfotos-6cre-v2-mobile-sync';
+const CACHE_NAME = 'ginfotos-6cre-v4-sync-fotos';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/logo%20ginfotos.png'];
 
 self.addEventListener('install', (event) => {
@@ -21,8 +21,6 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
-  // APIs, arquivos JS/CSS e assets do Vite precisam ser sempre rede/atualizados.
-  // Isso evita o celular ficar preso numa versão antiga do app.
   if (
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/assets/') ||
@@ -48,7 +46,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    fetch(request)
+    fetch(request, { cache: 'no-store' })
       .then((response) => {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
