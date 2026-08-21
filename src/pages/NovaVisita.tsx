@@ -1,5 +1,4 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
 import { UserProfile } from '../App';
 import { appendDictation, startVoiceInput } from '../lib/voiceInput';
 import { fileToCompressedImageDataUrl } from '../lib/fileDataUrl';
@@ -92,6 +91,13 @@ function buildNotes(params: {
   ].join('\n');
 }
 
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+  if (!text) return {} as Record<string, unknown>;
+  try { return JSON.parse(text) as Record<string, unknown>; }
+  catch { throw new Error(`Servidor devolveu resposta inválida (${response.status}).`); }
+}
+
 async function saveVisitViaServer(visit: {
   visitor_name: string;
   unidade_id: string;
@@ -100,15 +106,39 @@ async function saveVisitViaServer(visit: {
   created_by: string;
   photos: { name: string; caption: string; dataUrl?: string }[];
 }) {
+  // Primeiro salva somente o texto. Assim a requisicao nunca fica grande demais por causa das fotos.
   const response = await fetch('/api/visitas', {
     method: 'POST',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
-    body: JSON.stringify({ visit })
+    body: JSON.stringify({
+      visit: {
+        visitor_name: visit.visitor_name,
+        unidade_id: visit.unidade_id,
+        visit_date: visit.visit_date,
+        notes: visit.notes,
+        created_by: visit.created_by
+      }
+    })
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'API /api/visitas não salvou a visita.');
-  return payload.visit?.id as string | undefined;
+  const payload = await readJsonResponse(response);
+  const savedVisit = payload.visit as { id?: string } | undefined;
+  if (!response.ok || !savedVisit?.id) throw new Error(String(payload.error || 'API /api/visitas não salvou a visita.'));
+
+  // Depois envia uma foto por vez. Funciona melhor em Android, iPhone e internet movel.
+  for (const photo of visit.photos) {
+    if (!photo.dataUrl) continue;
+    const photoResponse = await fetch(`/api/visitas?action=add-photo&id=${encodeURIComponent(savedVisit.id)}&ts=${Date.now()}`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      body: JSON.stringify({ photo })
+    });
+    const photoPayload = await readJsonResponse(photoResponse);
+    if (!photoResponse.ok) throw new Error(String(photoPayload.error || `Falha ao sincronizar a foto ${photo.name}.`));
+  }
+
+  return savedVisit.id;
 }
 
 export default function NovaVisita({ profile }: NovaVisitaProps) {
@@ -185,9 +215,9 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
         caption: ''
       })));
       setPhotos((current) => [...current, ...newPhotos].slice(0, 8));
-      setMessage(`${newPhotos.length} foto(s) salva(s) temporariamente. Ao clicar em SALVAR VISITA, elas serão sincronizadas para todos.`);
+      setMessage(`${newPhotos.length} foto(s) pronta(s). Ao salvar a visita, cada foto será sincronizada separadamente para evitar falhas.`);
     } catch {
-      setMessage('Não foi possível salvar uma ou mais fotos. Tente anexar novamente.');
+      setMessage('Não foi possível preparar uma ou mais fotos. Tente anexar novamente.');
     }
   };
 
@@ -219,13 +249,13 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     if (!selectedUnidade) { setMessage('Selecione uma unidade escolar.'); return; }
 
     setSaving(true);
-    setMessage('Salvando visita e fotos...');
+    setMessage('Salvando visita no servidor e enviando fotos uma por vez...');
 
     const notes = buildNotes({ tipo, representante, servicos, observacoes, conclusao, selectedUnidade });
     const localId = `local-${Date.now()}`;
     let savedId = localId;
-    let savedInSupabase = false;
-    let supabaseError = '';
+    let savedInServer = false;
+    let syncError = '';
     const compactPhotos = photos.map((photo: PhotoItem) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl }));
 
     const visitRecord = {
@@ -241,21 +271,10 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       const serverId = await saveVisitViaServer(visitRecord);
       if (serverId) {
         savedId = serverId;
-        savedInSupabase = true;
+        savedInServer = true;
       }
-    } catch (serverError) {
-      supabaseError = serverError instanceof Error ? serverError.message : 'API /api/visitas falhou';
-      try {
-        const notesWithPhotos = compactPhotos.length ? `${notes}\nGINFOTOS_JSON:${JSON.stringify({ fotos: compactPhotos })}` : notes;
-        const { data, error } = await supabase.from('visitas').insert([{ ...visitRecord, notes: notesWithPhotos }]).select('id').single();
-        if (error) supabaseError = `${supabaseError} | Supabase direto: ${error.message}`;
-        else if (data?.id) {
-          savedId = data.id;
-          savedInSupabase = true;
-        }
-      } catch (error) {
-        supabaseError = `${supabaseError} | ${error instanceof Error ? error.message : 'erro desconhecido'}`;
-      }
+    } catch (error) {
+      syncError = error instanceof Error ? error.message : 'Servidor de sincronização não respondeu.';
     }
 
     saveLocalVisit({
@@ -283,9 +302,9 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     });
 
     window.dispatchEvent(new Event('ginfotos-visitas-updated'));
-    setMessage(savedInSupabase
-      ? `Visita salva e sincronizada com ${compactPhotos.length} foto(s). Abra Visitas Técnicas e clique em Atualizar visitas.`
-      : `Visita salva apenas neste celular com ${compactPhotos.length} foto(s). Falha na sincronização: ${supabaseError || 'Supabase não respondeu'}.`);
+    setMessage(savedInServer
+      ? `✅ Visita e ${compactPhotos.length} foto(s) sincronizadas para todos os usuários.`
+      : `⚠️ Visita mantida neste aparelho como PENDENTE. Clique em SINCRONIZAR AGORA quando a conexão voltar. Motivo: ${syncError || 'servidor indisponível'}.`);
     resetFormAfterSave();
     setSaving(false);
   };
@@ -310,8 +329,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
           <div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div>
           <div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
           <div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
-          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos serão reduzidas automaticamente para salvar no celular, aparecer no relatório e sincronizar para o computador.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
-          <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO...' : 'SALVAR VISITA'}</button>
+          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos são reduzidas e enviadas individualmente para melhorar a sincronização entre celular e computador.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
+          <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO E SINCRONIZANDO...' : 'SALVAR VISITA'}</button>
         </form>
         {message && <p className="notice">{message}</p>}
       </div>
