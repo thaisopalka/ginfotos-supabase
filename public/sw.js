@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ginfotos-6cre-v4-sync-fotos';
+const CACHE_NAME = 'ginfotos-6cre-v5-sync-repair';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/logo%20ginfotos.png'];
 
 self.addEventListener('install', (event) => {
@@ -21,14 +21,28 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(
+      fetch(request, { cache: 'no-store' }).catch(() => new Response(
+        JSON.stringify({ error: 'Sem conexão com o servidor. Tente SINCRONIZAR AGORA novamente.' }),
+        { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
+      ))
+    );
+    return;
+  }
+
   if (
-    url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/assets/') ||
     url.pathname.endsWith('.js') ||
     url.pathname.endsWith('.css') ||
     url.pathname.endsWith('.map')
   ) {
-    event.respondWith(fetch(request, { cache: 'no-store' }).catch(() => caches.match(request)));
+    event.respondWith(
+      fetch(request, { cache: 'no-store' }).catch(async () => {
+        const cached = await caches.match(request);
+        return cached || new Response('', { status: 503 });
+      })
+    );
     return;
   }
 
@@ -52,6 +66,9 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
         return response;
       })
-      .catch(() => caches.match(request))
+      .catch(async () => {
+        const cached = await caches.match(request);
+        return cached || new Response('', { status: 503 });
+      })
   );
 });
