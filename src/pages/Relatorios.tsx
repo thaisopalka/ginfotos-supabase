@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { downloadWordReport, WordReportPhoto, WordReportVisit } from '../lib/wordReport';
+import { supabase } from '../lib/supabaseClient';
 
 interface ApiPhoto {
   name?: string;
@@ -44,6 +45,13 @@ interface LocalVisitRecord {
   created_at: string;
 }
 
+interface UnitRecord {
+  id?: string | null;
+  designacao?: string | null;
+  name?: string | null;
+  address?: string | null;
+}
+
 interface ReportVisit extends WordReportVisit {
   id: string;
   origem: 'local' | 'servidor';
@@ -51,10 +59,19 @@ interface ReportVisit extends WordReportVisit {
 }
 
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
+const LOCAL_UNIDADES_KEY = 'ginfotos_unidades_local';
 
 function loadLocalVisits(): LocalVisitRecord[] {
   try {
     return JSON.parse(localStorage.getItem(LOCAL_VISITS_KEY) || '[]') as LocalVisitRecord[];
+  } catch {
+    return [];
+  }
+}
+
+function loadLocalUnits(): UnitRecord[] {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_UNIDADES_KEY) || '[]') as UnitRecord[];
   } catch {
     return [];
   }
@@ -75,6 +92,55 @@ function notesValue(notes: string | null | undefined, label: string) {
 
 function valueOrDefault(value?: string | null) {
   return value && value.trim() ? value : 'Não informado';
+}
+
+function normalizeMatch(value?: string | null) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function unitMatchesVisit(unit: UnitRecord, visit: ReportVisit) {
+  const visitDesignation = normalizeMatch(visit.designacao);
+  const visitName = normalizeMatch(visit.unidade);
+  const unitDesignation = normalizeMatch(unit.designacao);
+  const unitName = normalizeMatch(unit.name);
+  const unitId = normalizeMatch(unit.id);
+
+  if (visitDesignation && (visitDesignation === unitDesignation || visitDesignation === unitId)) return true;
+  if (visitName && visitName === unitName) return true;
+  return false;
+}
+
+function resolveAddressFromUnits(visit: ReportVisit, officialUnits: UnitRecord[], localUnits: UnitRecord[]) {
+  const official = officialUnits.find((unit) => unitMatchesVisit(unit, visit) && unit.address?.trim());
+  if (official?.address?.trim()) return official.address.trim();
+
+  const local = localUnits.find((unit) => unitMatchesVisit(unit, visit) && unit.address?.trim());
+  if (local?.address?.trim()) return local.address.trim();
+
+  if (visit.endereco && visit.endereco.trim() && visit.endereco.trim().toLowerCase() !== 'não informado') {
+    return visit.endereco.trim();
+  }
+
+  return 'Não informado';
+}
+
+async function fetchOfficialUnits() {
+  try {
+    const { data, error } = await supabase
+      .from('unidades')
+      .select('id, designacao, name, address')
+      .order('designacao');
+
+    if (error || !data) return [];
+    return data as UnitRecord[];
+  } catch {
+    return [];
+  }
 }
 
 function localToReport(item: LocalVisitRecord): ReportVisit {
@@ -146,6 +212,7 @@ async function fetchVisitDetail(id: string) {
 
 export default function Relatorios() {
   const [visitas, setVisitas] = useState<ReportVisit[]>([]);
+  const [officialUnits, setOfficialUnits] = useState<UnitRecord[]>([]);
   const [query, setQuery] = useState('');
   const [notice, setNotice] = useState('');
   const [generatingId, setGeneratingId] = useState<string | null>(null);
@@ -155,6 +222,11 @@ export default function Relatorios() {
     setLoading(true);
     setNotice('Carregando visitas sincronizadas do servidor...');
     const localPending = loadLocalVisits().filter((item) => item.id.startsWith('local-')).map(localToReport);
+
+    void fetchOfficialUnits().then((units) => {
+      if (units.length > 0) setOfficialUnits(units);
+    });
+
     try {
       const remoteRows = await fetchVisitList();
       const remote = remoteRows.map(apiToReport);
@@ -197,15 +269,23 @@ export default function Relatorios() {
 
   const handleGenerate = async (visit: ReportVisit) => {
     setGeneratingId(visit.id);
-    setNotice('Carregando dados completos e fotos para gerar o Word...');
+    setNotice('Carregando dados completos, endereço oficial e fotos para gerar o Word...');
+
     try {
       let completeVisit = visit;
       if (visit.origem === 'servidor') {
         const detailed = await fetchVisitDetail(visit.id);
         completeVisit = apiToReport(detailed);
       }
-      await downloadWordReport(completeVisit);
-      setNotice(`Relatório Word gerado com sucesso${completeVisit.fotos.length ? ` com ${completeVisit.fotos.length} foto(s)` : ''}.`);
+
+      const official = officialUnits.length > 0 ? officialUnits : await fetchOfficialUnits();
+      if (official.length > 0 && officialUnits.length === 0) setOfficialUnits(official);
+
+      const resolvedAddress = resolveAddressFromUnits(completeVisit, official, loadLocalUnits());
+      const reportVisit: ReportVisit = { ...completeVisit, endereco: resolvedAddress };
+
+      await downloadWordReport(reportVisit);
+      setNotice(`Relatório Word gerado com sucesso${reportVisit.fotos.length ? ` com ${reportVisit.fotos.length} foto(s)` : ''}.`);
     } catch (error) {
       setNotice(`Não foi possível gerar o DOCX: ${error instanceof Error ? error.message : 'erro desconhecido'}.`);
     } finally {
