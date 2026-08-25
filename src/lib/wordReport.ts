@@ -46,11 +46,15 @@ const LIGHT_BLUE = 'E8F0FA';
 const BORDER = '111827';
 const SOFT_BORDER = '8EA8C7';
 const FONT = 'Calibri';
-const PHOTO_WIDTH = 325;
-const PHOTO_HEIGHT = 225;
+const PHOTO_WIDTH = 350;
+const PHOTO_HEIGHT = 280;
 
 function clean(value?: string | null) {
   return value && value.trim() ? value.trim() : 'Não informado';
+}
+
+function cleanCaption(value?: string | null) {
+  return value && value.trim() ? value.trim() : '-';
 }
 
 function formatDate(value?: string | null) {
@@ -226,22 +230,32 @@ async function standardizePhotoDataUrl(dataUrl: string) {
 
   const canvas = document.createElement('canvas');
   canvas.width = 1200;
-  canvas.height = 830;
+  canvas.height = 960;
   const context = canvas.getContext('2d');
   if (!context) return dataUrl;
 
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, canvas.width, canvas.height);
+
   const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
   const width = Math.round(image.width * scale);
   const height = Math.round(image.height * scale);
   const x = Math.round((canvas.width - width) / 2);
   const y = Math.round((canvas.height - height) / 2);
   context.drawImage(image, x, y, width, height);
-  return canvas.toDataURL('image/jpeg', 0.86);
+  return canvas.toDataURL('image/jpeg', 0.9);
 }
 
 async function photoCell(photo?: WordReportPhoto) {
+  if (!photo) {
+    return new TableCell({
+      width: { size: 50, type: WidthType.PERCENTAGE },
+      verticalAlign: VerticalAlign.TOP,
+      margins: { top: 45, bottom: 45, left: 45, right: 45 },
+      children: [new Paragraph({ children: [] })]
+    });
+  }
+
   const children: Paragraph[] = [];
 
   try {
@@ -250,6 +264,7 @@ async function photoCell(photo?: WordReportPhoto) {
       const standardized = await standardizePhotoDataUrl(source);
       children.push(new Paragraph({
         alignment: AlignmentType.CENTER,
+        spacing: { after: 0 },
         children: [new ImageRun({
           data: dataUrlToUint8Array(standardized),
           transformation: { width: PHOTO_WIDTH, height: PHOTO_HEIGHT },
@@ -257,22 +272,22 @@ async function photoCell(photo?: WordReportPhoto) {
         })]
       }));
     } else {
-      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não incorporada', { color: '64748B' })] }));
+      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não incorporada', { color: '64748B', size: 18 })] }));
     }
   } catch {
-    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não carregada', { color: '64748B' })] }));
+    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não carregada', { color: '64748B', size: 18 })] }));
   }
 
   children.push(new Paragraph({
-    spacing: { before: 50 },
+    spacing: { before: 45, after: 0 },
     alignment: AlignmentType.LEFT,
-    children: [text(clean(photo?.caption || photo?.name || 'Sem legenda.'), { bold: true, size: 20 })]
+    children: [text(cleanCaption(photo.caption), { bold: true, size: 20 })]
   }));
 
   return new TableCell({
     width: { size: 50, type: WidthType.PERCENTAGE },
     verticalAlign: VerticalAlign.TOP,
-    margins: { top: 70, bottom: 70, left: 70, right: 70 },
+    margins: { top: 45, bottom: 45, left: 45, right: 45 },
     children
   });
 }
@@ -294,10 +309,17 @@ async function photoSectionElements(fotos: WordReportPhoto[]) {
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
     const chunk = chunks[chunkIndex];
     if (chunkIndex > 0) elements.push(new Paragraph({ children: [new PageBreak()] }));
-    elements.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 85 }, children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 28, color: BLUE })] }));
+
+    elements.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 80 },
+      children: [text('REGISTRO FOTOGRÁFICO', { bold: true, size: 28, color: BLUE })]
+    }));
+
     elements.push(await photoPairTable(chunk[0], chunk[1]));
+
     if (chunk.length > 2) {
-      elements.push(new Paragraph({ spacing: { after: 190 }, children: [text('', { size: 2 })] }));
+      elements.push(new Paragraph({ spacing: { before: 0, after: 150 }, children: [] }));
       elements.push(await photoPairTable(chunk[2], chunk[3]));
     }
   }
@@ -310,7 +332,7 @@ export async function downloadWordReport(visit: WordReportVisit) {
     rows: [
       infoRow('Data', formatDate(visit.data)),
       infoRow('Designação + Unidade Escolar', `${clean(visit.designacao)} - ${clean(visit.unidade)}`),
-      infoRow('Endereço + Bairro', `${clean(visit.endereco)} - ${clean(visit.bairro)}`),
+      infoRow('Endereço', clean(visit.endereco)),
       infoRow('Diretor(a) Geral', clean(visit.diretorGeral)),
       infoRow('Representante E/GIN/6ª CRE', clean(visit.representante || 'Engenheira Márcia Braga'))
     ]
@@ -318,11 +340,16 @@ export async function downloadWordReport(visit: WordReportVisit) {
 
   const doc = new Document({
     sections: [{
-      properties: { page: { size: { orientation: PageOrientation.PORTRAIT, width: 11906, height: 16838 }, margin: { top: 700, right: 500, bottom: 730, left: 500 } } },
+      properties: {
+        page: {
+          size: { orientation: PageOrientation.PORTRAIT, width: 11906, height: 16838 },
+          margin: { top: 650, right: 420, bottom: 650, left: 420 }
+        }
+      },
       headers: { default: pageHeader() },
       footers: { default: pageFooter() },
       children: [
-        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 110, after: 225 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 100, after: 210 }, children: [text('RELATÓRIO DE VISITA TÉCNICA', { bold: true, size: 34, color: BLUE })] }),
         infoTable,
         heading('Serviços Verificados'),
         paragraph(visit.servicos),
