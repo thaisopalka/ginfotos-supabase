@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ComponentType } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { getCurrentUser, AppUser } from './lib/session';
 import { ProtectedRoute } from './routes/ProtectedRoute';
@@ -14,7 +15,6 @@ import Admin from './pages/Admin';
 import Relatorios from './pages/Relatorios';
 import WhatsappDiretores from './pages/WhatsappDiretores';
 import Perfil from './pages/Perfil';
-import MapaUnidades from './pages/MapaUnidades';
 import NotFound from './pages/NotFound';
 
 export interface UserProfile {
@@ -36,6 +36,39 @@ function isIOSDevice() {
 
 function isStandaloneMode() {
   return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
+function SafeMapaUnidades() {
+  const [MapComponent, setMapComponent] = useState<ComponentType | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    import('./pages/MapaUnidades')
+      .then((module) => {
+        if (active) setMapComponent(() => module.default);
+      })
+      .catch((error) => {
+        console.error('Falha ao carregar Mapa das Unidades:', error);
+        if (active) setFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (failed) {
+    return (
+      <section className="page-card">
+        <h1>Mapa das Unidades</h1>
+        <p className="page-description">O mapa não conseguiu carregar neste dispositivo. As demais áreas do GINFOTOS continuam disponíveis normalmente.</p>
+        <button type="button" className="empty-button" onClick={() => window.location.reload()} style={{ marginTop: 16 }}>Tentar novamente</button>
+      </section>
+    );
+  }
+
+  if (!MapComponent) return <div className="page-center">Carregando mapa das unidades…</div>;
+  return <MapComponent />;
 }
 
 function App() {
@@ -102,7 +135,7 @@ function App() {
             <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
             <Route path="/" element={<ProtectedRoute><Dashboard profile={profile} /></ProtectedRoute>} />
             <Route path="/unidades" element={<ProtectedRoute><Unidades /></ProtectedRoute>} />
-            <Route path="/mapa-unidades" element={<ProtectedRoute><MapaUnidades /></ProtectedRoute>} />
+            <Route path="/mapa-unidades" element={<ProtectedRoute><SafeMapaUnidades /></ProtectedRoute>} />
             <Route path="/nova-visita" element={<ProtectedRoute><NovaVisita profile={profile} /></ProtectedRoute>} />
             <Route path="/visitas" element={<ProtectedRoute><Visitas profile={profile} /></ProtectedRoute>} />
             <Route path="/pastas" element={<ProtectedRoute><Pastas /></ProtectedRoute>} />
