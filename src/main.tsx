@@ -5,6 +5,7 @@ import App from './App';
 import './index.css';
 import './layout-fixes.css';
 import './mobile-pwa.css';
+import './map-unidades.css';
 
 function applyMobileClass() {
   const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
