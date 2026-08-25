@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
 import { downloadWordReport, WordReportPhoto, WordReportVisit } from '../lib/wordReport';
 
-interface SupabaseVisita {
+interface ApiPhoto {
+  name?: string;
+  caption?: string;
+  dataUrl?: string;
+  url?: string;
+  path?: string;
+}
+
+interface ApiVisit {
   id: string;
   visitor_name?: string | null;
   unidade_id?: string | null;
   visit_date?: string | null;
   notes?: string | null;
   created_by?: string | null;
+  photo_count?: number;
+  photos?: ApiPhoto[];
 }
 
 interface LocalVisitRecord {
@@ -37,7 +46,8 @@ interface LocalVisitRecord {
 
 interface ReportVisit extends WordReportVisit {
   id: string;
-  origem: 'local' | 'supabase';
+  origem: 'local' | 'servidor';
+  photoCount?: number;
 }
 
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
@@ -77,30 +87,61 @@ function localToReport(item: LocalVisitRecord): ReportVisit {
     endereco: valueOrDefault(item.endereco),
     bairro: valueOrDefault(item.bairro),
     diretorGeral: valueOrDefault(item.diretor_geral),
-    representante: 'Engenheira Márcia Braga',
+    representante: item.representante || 'Engenheira Márcia Braga',
     servicos: valueOrDefault(item.servicos),
     observacoes: valueOrDefault(item.observacoes),
     conclusao: valueOrDefault(item.conclusao),
-    fotos: item.fotos || []
+    fotos: item.fotos || [],
+    photoCount: item.photo_count || item.fotos?.length || 0
   };
 }
 
-function supabaseToReport(item: SupabaseVisita): ReportVisit {
+function apiToReport(item: ApiVisit): ReportVisit {
+  const fotos: WordReportPhoto[] = (item.photos || []).map((photo, index) => ({
+    name: photo.name || `Foto ${index + 1}`,
+    caption: photo.caption || '',
+    dataUrl: photo.dataUrl,
+    url: photo.url,
+    path: photo.path
+  }));
   return {
     id: item.id,
-    origem: 'supabase',
+    origem: 'servidor',
     data: item.visit_date || '',
     designacao: valueOrDefault(notesValue(item.notes, 'Designacao') || item.unidade_id),
     unidade: valueOrDefault(notesValue(item.notes, 'Unidade escolar') || item.unidade_id),
     endereco: valueOrDefault(notesValue(item.notes, 'Endereco')),
     bairro: valueOrDefault(notesValue(item.notes, 'Bairro')),
-    diretorGeral: valueOrDefault(notesValue(item.notes, 'Diretor geral') || notesValue(item.notes, 'Diretor(a) geral')),
-    representante: 'Engenheira Márcia Braga',
-    servicos: valueOrDefault(notesValue(item.notes, 'Servicos verificados') || item.notes),
+    diretorGeral: valueOrDefault(notesValue(item.notes, 'Diretor') || notesValue(item.notes, 'Diretor geral') || notesValue(item.notes, 'Diretor(a) geral')),
+    representante: item.visitor_name || notesValue(item.notes, 'Representante E/6 CRE/GIN') || 'Engenheira Márcia Braga',
+    servicos: valueOrDefault(notesValue(item.notes, 'Servicos verificados')),
     observacoes: valueOrDefault(notesValue(item.notes, 'Observacoes')),
     conclusao: valueOrDefault(notesValue(item.notes, 'Conclusao')),
-    fotos: []
+    fotos,
+    photoCount: Number(item.photo_count || fotos.length || 0)
   };
+}
+
+async function fetchVisitList() {
+  const response = await fetch(`/api/visitas?ts=${Date.now()}`, {
+    method: 'GET',
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Servidor de visitas não respondeu.');
+  return (Array.isArray(payload.data) ? payload.data : []) as ApiVisit[];
+}
+
+async function fetchVisitDetail(id: string) {
+  const response = await fetch(`/api/visitas?id=${encodeURIComponent(id)}&ts=${Date.now()}`, {
+    method: 'GET',
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.visit) throw new Error(payload.error || 'Não foi possível carregar os dados completos da visita.');
+  return payload.visit as ApiVisit;
 }
 
 export default function Relatorios() {
@@ -108,23 +149,25 @@ export default function Relatorios() {
   const [query, setQuery] = useState('');
   const [notice, setNotice] = useState('');
   const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const loadVisits = async () => {
-    const local = loadLocalVisits().map(localToReport);
+    setLoading(true);
+    setNotice('Carregando visitas sincronizadas do servidor...');
+    const localPending = loadLocalVisits().filter((item) => item.id.startsWith('local-')).map(localToReport);
     try {
-      const { data, error } = await supabase.from('visitas').select('*').order('visit_date', { ascending: false });
-      if (!error && data) {
-        const remote = (data as SupabaseVisita[]).map(supabaseToReport);
-        const merged = [...local, ...remote].filter((item, index, array) => index === array.findIndex((candidate) => candidate.id === item.id));
-        setVisitas(merged.sort((a, b) => (b.data || '').localeCompare(a.data || '')));
-        setNotice(local.length ? 'Visitas locais carregadas. O botão agora gera DOCX real, não HTML.' : 'Visitas carregadas.');
-      } else {
-        setVisitas(local);
-        setNotice('Supabase não respondeu. Mostrando visitas salvas no dispositivo.');
-      }
-    } catch {
-      setVisitas(local);
-      setNotice('Supabase não respondeu. Mostrando visitas salvas no dispositivo.');
+      const remoteRows = await fetchVisitList();
+      const remote = remoteRows.map(apiToReport);
+      const remoteIds = new Set(remote.map((item) => item.id));
+      const onlyPending = localPending.filter((item) => !remoteIds.has(item.id));
+      const merged = [...remote, ...onlyPending].sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+      setVisitas(merged);
+      setNotice(`${remote.length} visita(s) sincronizada(s) disponíveis para gerar Word.${onlyPending.length ? ` ${onlyPending.length} visita(s) ainda pendente(s) neste aparelho.` : ''}`);
+    } catch (error) {
+      setVisitas(localPending);
+      setNotice(`Servidor não respondeu: ${error instanceof Error ? error.message : 'erro desconhecido'}.`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -133,9 +176,11 @@ export default function Relatorios() {
     const handler = () => loadVisits();
     window.addEventListener('ginfotos-visitas-updated', handler);
     window.addEventListener('storage', handler);
+    window.addEventListener('focus', handler);
     return () => {
       window.removeEventListener('ginfotos-visitas-updated', handler);
       window.removeEventListener('storage', handler);
+      window.removeEventListener('focus', handler);
     };
   }, []);
 
@@ -152,12 +197,17 @@ export default function Relatorios() {
 
   const handleGenerate = async (visit: ReportVisit) => {
     setGeneratingId(visit.id);
-    setNotice('Gerando relatório Word em DOCX real...');
+    setNotice('Carregando dados completos e fotos para gerar o Word...');
     try {
-      await downloadWordReport(visit);
-      setNotice('Relatório DOCX gerado com sucesso.');
-    } catch {
-      setNotice('Não foi possível gerar o DOCX. Verifique se as fotos foram anexadas em uma visita nova e tente novamente.');
+      let completeVisit = visit;
+      if (visit.origem === 'servidor') {
+        const detailed = await fetchVisitDetail(visit.id);
+        completeVisit = apiToReport(detailed);
+      }
+      await downloadWordReport(completeVisit);
+      setNotice(`Relatório Word gerado com sucesso${completeVisit.fotos.length ? ` com ${completeVisit.fotos.length} foto(s)` : ''}.`);
+    } catch (error) {
+      setNotice(`Não foi possível gerar o DOCX: ${error instanceof Error ? error.message : 'erro desconhecido'}.`);
     } finally {
       setGeneratingId(null);
     }
@@ -171,7 +221,7 @@ export default function Relatorios() {
           <h1>Relatórios Word</h1>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button type="button" className="empty-button" onClick={loadVisits}>Atualizar</button>
+          <button type="button" className="primary sync-strong" onClick={loadVisits} disabled={loading}>{loading ? 'ATUALIZANDO...' : '🔄 ATUALIZAR VISITAS'}</button>
           <span className="status-pill">{filtered.length} visita(s)</span>
         </div>
       </div>
@@ -194,7 +244,7 @@ export default function Relatorios() {
 
       {filtered.length === 0 ? (
         <section className="empty-state">
-          <p>Nenhuma visita disponível para gerar relatório. Clique em Atualizar depois de salvar uma Nova Visita.</p>
+          <p>{loading ? 'Carregando visitas do servidor...' : 'Nenhuma visita disponível para gerar relatório.'}</p>
         </section>
       ) : (
         <section className="page-card">
@@ -220,11 +270,11 @@ export default function Relatorios() {
                     <td>{visit.unidade}</td>
                     <td>{visit.bairro}</td>
                     <td>{visit.diretorGeral}</td>
-                    <td>{visit.fotos.length}</td>
-                    <td><span className="status-chip">{visit.origem === 'local' ? 'Dispositivo' : 'Supabase'}</span></td>
+                    <td>{visit.photoCount ?? visit.fotos.length}</td>
+                    <td><span className="status-chip">{visit.origem === 'local' ? 'Pendente' : 'Sincronizada'}</span></td>
                     <td>
-                      <button type="button" className="empty-button" onClick={() => handleGenerate(visit)} disabled={generatingId === visit.id}>
-                        {generatingId === visit.id ? 'Gerando...' : 'Gerar DOCX'}
+                      <button type="button" className="primary" onClick={() => handleGenerate(visit)} disabled={generatingId === visit.id}>
+                        {generatingId === visit.id ? 'GERANDO WORD...' : 'GERAR WORD (.DOCX)'}
                       </button>
                     </td>
                   </tr>
