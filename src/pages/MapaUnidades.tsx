@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import maplibregl, { GeoJSONSource, Map as MapLibreMap, Marker } from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { supabase } from '../lib/supabaseClient';
 
 interface UnidadeMapa {
@@ -26,12 +28,22 @@ interface RouteStop extends UnidadeMapa {
   routeDistanceFromPrevious?: number | null;
 }
 
+interface SchoolFeatureCollection {
+  type: 'FeatureCollection';
+  features: Array<{
+    type: 'Feature';
+    geometry: { type: 'Point'; coordinates: [number, number] };
+    properties: { id: string; title: string; bairro: string };
+  }>;
+}
+
 const LOCAL_UNIDADES_KEY = 'ginfotos_unidades_local';
+const DEFAULT_CENTER: [number, number] = [-43.3102, -22.8246];
 
 const fallbackUnidades: UnidadeMapa[] = [
-  { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', origem: 'Base provisoria' },
-  { id: '06-22-001', designacao: '06.22.001', name: 'EM GUILHERME TELL', address: '', bairro: '', origem: 'Base provisoria' },
-  { id: '06-25-000', designacao: '06.25.000', name: 'EM ALZIRO ZARUR', address: '', bairro: '', origem: 'Base provisoria' }
+  { id: '06-22-204', designacao: '06.22.204', name: 'GET JOAO DO RIO', address: '', bairro: '', origem: 'Base provisória' },
+  { id: '06-22-001', designacao: '06.22.001', name: 'EM GUILHERME TELL', address: '', bairro: '', origem: 'Base provisória' },
+  { id: '06-25-000', designacao: '06.25.000', name: 'EM ALZIRO ZARUR', address: '', bairro: '', origem: 'Base provisória' }
 ];
 
 function loadLocalUnidades(): UnidadeMapa[] {
@@ -40,6 +52,10 @@ function loadLocalUnidades(): UnidadeMapa[] {
   } catch {
     return [];
   }
+}
+
+function hasValue(value: unknown) {
+  return value !== null && value !== undefined && String(value).trim() !== '';
 }
 
 function normalizeUnidade(raw: Partial<UnidadeMapa>): UnidadeMapa {
@@ -62,11 +78,33 @@ function normalizeUnidade(raw: Partial<UnidadeMapa>): UnidadeMapa {
 
 function mergeUnidades(...groups: UnidadeMapa[][]) {
   const map = new Map<string, UnidadeMapa>();
+
   groups.flat().forEach((item) => {
     const normalized = normalizeUnidade(item);
     const key = String(normalized.designacao || normalized.id || normalized.name).toLowerCase();
-    if (!map.has(key)) map.set(key, normalized);
+    const current = map.get(key);
+
+    if (!current) {
+      map.set(key, normalized);
+      return;
+    }
+
+    map.set(key, {
+      ...current,
+      name: hasValue(current.name) && current.name !== 'Unidade sem nome' ? current.name : normalized.name,
+      address: hasValue(current.address) ? current.address : normalized.address,
+      bairro: hasValue(current.bairro) ? current.bairro : normalized.bairro,
+      telefone: hasValue(current.telefone) ? current.telefone : normalized.telefone,
+      diretor_geral: hasValue(current.diretor_geral) ? current.diretor_geral : normalized.diretor_geral,
+      celular_diretor_geral: hasValue(current.celular_diretor_geral) ? current.celular_diretor_geral : normalized.celular_diretor_geral,
+      diretor_adjunto: hasValue(current.diretor_adjunto) ? current.diretor_adjunto : normalized.diretor_adjunto,
+      celular_diretor_adjunto: hasValue(current.celular_diretor_adjunto) ? current.celular_diretor_adjunto : normalized.celular_diretor_adjunto,
+      latitude: hasValue(current.latitude) ? current.latitude : normalized.latitude,
+      longitude: hasValue(current.longitude) ? current.longitude : normalized.longitude,
+      origem: current.origem || normalized.origem
+    });
   });
+
   return Array.from(map.values()).sort((a, b) => String(a.designacao || a.name).localeCompare(String(b.designacao || b.name)));
 }
 
@@ -77,10 +115,11 @@ function toNumber(value?: number | string | null) {
 }
 
 function coordinatePoint(unit: UnidadeMapa): UserLocation | null {
-  const lat = toNumber(unit.latitude);
-  const lng = toNumber(unit.longitude);
-  if (lat === null || lng === null) return null;
-  return { latitude: lat, longitude: lng };
+  const latitude = toNumber(unit.latitude);
+  const longitude = toNumber(unit.longitude);
+  if (latitude === null || longitude === null) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { latitude, longitude };
 }
 
 function hasCoordinates(unit: UnidadeMapa) {
@@ -88,35 +127,46 @@ function hasCoordinates(unit: UnidadeMapa) {
 }
 
 function fullAddress(unit: UnidadeMapa) {
-  const address = unit.address?.trim();
-  const bairro = unit.bairro?.trim();
-  const name = unit.name?.trim();
-  const parts = [address, bairro, 'Rio de Janeiro RJ'].filter(Boolean);
-  if (parts.length > 1) return parts.join(', ');
-  return [name, bairro, 'Rio de Janeiro RJ'].filter(Boolean).join(', ');
+  return [unit.address?.trim(), unit.bairro?.trim(), 'Rio de Janeiro - RJ'].filter(Boolean).join(', ');
+}
+
+function routeDestination(unit: UnidadeMapa) {
+  const point = coordinatePoint(unit);
+  return point ? `${point.latitude},${point.longitude}` : fullAddress(unit) || unit.name;
+}
+
+function wazeUrl(unit: UnidadeMapa) {
+  const point = coordinatePoint(unit);
+  if (point) return `https://waze.com/ul?ll=${point.latitude},${point.longitude}&navigate=yes`;
+  return `https://waze.com/ul?q=${encodeURIComponent(fullAddress(unit) || unit.name)}&navigate=yes`;
+}
+
+function googleMapsUrl(unit: UnidadeMapa) {
+  const destination = encodeURIComponent(routeDestination(unit));
+  return `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
 }
 
 function normalizeText(value?: string | null) {
-  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-function sameNeighborhood(a: UnidadeMapa, b: UnidadeMapa) {
-  const bairroA = normalizeText(a.bairro);
-  const bairroB = normalizeText(b.bairro);
-  return Boolean(bairroA && bairroB && bairroA === bairroB);
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 function searchLabel(unit: UnidadeMapa) {
-  return `${unit.designacao || ''} ${unit.name || ''} ${unit.address || ''} ${unit.bairro || ''} ${unit.diretor_geral || ''}`.toLowerCase();
+  return normalizeText(`${unit.designacao || ''} ${unit.name || ''} ${unit.address || ''} ${unit.bairro || ''} ${unit.diretor_geral || ''}`);
 }
 
 function pointDistanceKm(origin: UserLocation, destination: UserLocation) {
   const earthRadiusKm = 6371;
   const dLat = ((destination.latitude - origin.latitude) * Math.PI) / 180;
   const dLng = ((destination.longitude - origin.longitude) * Math.PI) / 180;
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos((origin.latitude * Math.PI) / 180) * Math.cos((destination.latitude * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return earthRadiusKm * c;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos((origin.latitude * Math.PI) / 180)
+    * Math.cos((destination.latitude * Math.PI) / 180)
+    * Math.sin(dLng / 2) ** 2;
+  return earthRadiusKm * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
 function distanceInKm(unit: UnidadeMapa, userLocation: UserLocation | null) {
@@ -125,41 +175,15 @@ function distanceInKm(unit: UnidadeMapa, userLocation: UserLocation | null) {
   return pointDistanceKm(userLocation, point);
 }
 
-function mapsQuery(unit: UnidadeMapa) {
-  const point = coordinatePoint(unit);
-  if (point) return `${point.latitude},${point.longitude}`;
-  return fullAddress(unit);
-}
-
-function googleMapsEmbedUrl(unit: UnidadeMapa) {
-  return `https://www.google.com/maps?q=${encodeURIComponent(mapsQuery(unit))}&output=embed`;
-}
-
-function googleMapsOpenUrl(unit: UnidadeMapa) {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapsQuery(unit))}`;
-}
-
-function wazeUrl(unit: UnidadeMapa) {
-  const point = coordinatePoint(unit);
-  if (point) return `https://waze.com/ul?ll=${point.latitude},${point.longitude}&navigate=yes`;
-  return `https://waze.com/ul?q=${encodeURIComponent(fullAddress(unit))}&navigate=yes`;
+function distanceLabel(unit: UnidadeMapa, userLocation: UserLocation | null) {
+  const distance = distanceInKm(unit, userLocation);
+  if (distance === null) return 'Distância indisponível';
+  if (distance < 1) return `${Math.round(distance * 1000)} m de você`;
+  return `${distance.toFixed(1)} km de você`;
 }
 
 function stopTitle(unit: UnidadeMapa) {
   return unit.designacao ? `${unit.designacao} - ${unit.name}` : unit.name;
-}
-
-function sortByNeighborhoodAndName(units: UnidadeMapa[], anchor?: UnidadeMapa) {
-  return units.slice().sort((a, b) => {
-    if (anchor) {
-      const aSame = sameNeighborhood(anchor, a) ? 0 : 1;
-      const bSame = sameNeighborhood(anchor, b) ? 0 : 1;
-      if (aSame !== bSame) return aSame - bSame;
-    }
-    const bairroCompare = String(a.bairro || '').localeCompare(String(b.bairro || ''));
-    if (bairroCompare !== 0) return bairroCompare;
-    return String(a.designacao || a.name).localeCompare(String(b.designacao || b.name));
-  });
 }
 
 function buildRouteStops(units: UnidadeMapa[], start: UserLocation | null, maxStops: number) {
@@ -197,88 +221,95 @@ function buildRouteStops(units: UnidadeMapa[], start: UserLocation | null, maxSt
 
   if (ordered.length < maxStops) {
     const usedIds = new Set(ordered.map((unit) => unit.id));
-    const remaining = sortByNeighborhoodAndName([...withCoordinates, ...withoutCoordinates].filter((unit) => !usedIds.has(unit.id)));
-    remaining.slice(0, maxStops - ordered.length).forEach((unit) => ordered.push({ ...unit, routeDistanceFromPrevious: null }));
+    [...withCoordinates, ...withoutCoordinates]
+      .filter((unit) => !usedIds.has(unit.id))
+      .slice(0, maxStops - ordered.length)
+      .forEach((unit) => ordered.push({ ...unit, routeDistanceFromPrevious: null }));
   }
 
   return ordered;
 }
 
-function buildRouteNearAnchor(anchor: UnidadeMapa, allUnits: UnidadeMapa[], maxStops: number) {
-  const anchorPoint = coordinatePoint(anchor);
-  const candidates = allUnits.filter((unit) => unit.id !== anchor.id && unit.name && unit.name !== 'Unidade sem nome');
-  const sameBairro = candidates.filter((unit) => sameNeighborhood(anchor, unit));
-  const base = sameBairro.length > 0 ? sameBairro : candidates;
-
-  let nextStops: RouteStop[] = [];
-  if (anchorPoint) {
-    nextStops = buildRouteStops(base, anchorPoint, Math.max(0, maxStops - 1));
-  } else {
-    nextStops = sortByNeighborhoodAndName(base, anchor).slice(0, Math.max(0, maxStops - 1)).map((unit) => ({ ...unit, routeDistanceFromPrevious: null }));
-  }
-
-  return [{ ...anchor, routeDistanceFromPrevious: null }, ...nextStops].slice(0, maxStops);
-}
-
 function googleRouteUrl(stops: RouteStop[], userLocation: UserLocation | null) {
   if (stops.length === 0) return '';
-  const limitedStops = stops.slice(0, 10);
-
-  if (limitedStops.length === 1) {
-    const params = new URLSearchParams({ api: '1', destination: mapsQuery(limitedStops[0]), travelmode: 'driving' });
-    if (userLocation) params.set('origin', `${userLocation.latitude},${userLocation.longitude}`);
-    return `https://www.google.com/maps/dir/?${params.toString()}`;
-  }
-
-  const first = limitedStops[0];
-  const last = limitedStops[limitedStops.length - 1];
-  const middle = userLocation ? limitedStops.slice(0, -1) : limitedStops.slice(1, -1);
-  const origin = userLocation ? `${userLocation.latitude},${userLocation.longitude}` : mapsQuery(first);
-  const destination = mapsQuery(last);
-  const waypoints = middle.map(mapsQuery).join('|');
-  const params = new URLSearchParams({ api: '1', origin, destination, travelmode: 'driving' });
-  if (waypoints) params.set('waypoints', waypoints);
+  const limited = stops.slice(0, 10);
+  const last = limited[limited.length - 1];
+  const origin = userLocation
+    ? `${userLocation.latitude},${userLocation.longitude}`
+    : routeDestination(limited[0]);
+  const middle = limited.length > 1 ? limited.slice(0, -1).map(routeDestination).join('|') : '';
+  const params = new URLSearchParams({
+    api: '1',
+    origin,
+    destination: routeDestination(last),
+    travelmode: 'driving'
+  });
+  if (middle) params.set('waypoints', middle);
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
-function routeText(stops: RouteStop[]) {
-  return stops.map((unit, index) => `${index + 1}. ${stopTitle(unit)} - ${unit.address || 'Endereço não informado'} - ${unit.bairro || ''}`).join('\n');
+function schoolsGeoJson(units: UnidadeMapa[]): SchoolFeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: units.flatMap((unit) => {
+      const point = coordinatePoint(unit);
+      if (!point) return [];
+      return [{
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [point.longitude, point.latitude] as [number, number] },
+        properties: { id: unit.id, title: stopTitle(unit), bairro: unit.bairro || '' }
+      }];
+    })
+  };
 }
 
 export default function MapaUnidades() {
   const [unidades, setUnidades] = useState<UnidadeMapa[]>(fallbackUnidades);
-  const [selectedId, setSelectedId] = useState(fallbackUnidades[0].id);
+  const [selectedId, setSelectedId] = useState('');
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<'mapa' | 'lista' | 'rotas'>('mapa');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState('Carregando unidades...');
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [nearestFirst, setNearestFirst] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
   const [routeLimit, setRouteLimit] = useState(6);
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
-  const [routeMode, setRouteMode] = useState('');
+
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const userMarkerRef = useRef<Marker | null>(null);
+  const unitsRef = useRef<UnidadeMapa[]>(unidades);
+  const firstFitRef = useRef(false);
+
+  useEffect(() => {
+    unitsRef.current = unidades;
+  }, [unidades]);
 
   const loadUnidades = async () => {
     const local = loadLocalUnidades().map((item) => ({ ...item, origem: item.origem || 'Local' }));
     const initial = mergeUnidades(local, fallbackUnidades);
     setUnidades(initial);
-    setSelectedId((current) => initial.find((item) => item.id === current)?.id || initial[0]?.id || '');
-    setNotice('Mapa carregado com a base local do app.');
+    setNotice(`${initial.length} unidade(s) disponíveis no dispositivo. Atualizando base...`);
 
     try {
       const { data, error } = await supabase
         .from('unidades')
         .select('id, name, address, designacao, bairro, telefone, diretor_geral, celular_diretor_geral, diretor_adjunto, celular_diretor_adjunto, latitude, longitude')
-        .order('name');
+        .order('designacao');
 
       if (!error && data && data.length > 0) {
-        const remote = (data as UnidadeMapa[]).map((item: UnidadeMapa) => ({ ...item, origem: 'Supabase' }));
+        const remote = (data as UnidadeMapa[]).map((item) => ({ ...item, origem: 'Supabase' }));
         const merged = mergeUnidades(local, remote, fallbackUnidades);
         setUnidades(merged);
-        setSelectedId((current) => merged.find((item) => item.id === current)?.id || merged[0]?.id || '');
-        setNotice('Mapa carregado com unidades locais e Supabase.');
+        setNotice(`${merged.length} unidade(s) carregadas. ${merged.filter(hasCoordinates).length} já aparecem no mapa.`);
+      } else if (error) {
+        setNotice(`Base online indisponível. O mapa continua com os dados salvos no dispositivo.`);
+      } else {
+        setNotice(`${initial.length} unidade(s) carregadas da base local.`);
       }
     } catch {
-      setNotice('Supabase não respondeu. O mapa continua funcionando com a base local/importada.');
+      setNotice('Base online não respondeu. O mapa continua funcionando com os dados salvos no dispositivo.');
     }
   };
 
@@ -287,9 +318,10 @@ export default function MapaUnidades() {
   }, []);
 
   const filtered = useMemo(() => {
-    const term = query.trim().toLowerCase();
+    const term = normalizeText(query);
     const result = term ? unidades.filter((unit) => searchLabel(unit).includes(term)) : [...unidades];
-    if (nearestFirst) {
+
+    if (nearestFirst && userLocation) {
       result.sort((a, b) => {
         const da = distanceInKm(a, userLocation);
         const db = distanceInKm(b, userLocation);
@@ -299,268 +331,406 @@ export default function MapaUnidades() {
         return da - db;
       });
     }
+
     return result;
   }, [query, unidades, nearestFirst, userLocation]);
 
-  const selected = useMemo(() => unidades.find((unit) => unit.id === selectedId) || filtered[0] || unidades[0], [selectedId, unidades, filtered]);
-  const unitsWithCoordinates = unidades.filter(hasCoordinates).length;
-  const filteredWithCoordinates = filtered.filter(hasCoordinates).length;
-  const totalRouteKm = routeStops.reduce((total, stop) => total + (stop.routeDistanceFromPrevious || 0), 0);
+  const filteredWithCoordinates = useMemo(() => filtered.filter(hasCoordinates), [filtered]);
+  const selected = useMemo(
+    () => unidades.find((unit) => unit.id === selectedId) || null,
+    [selectedId, unidades]
+  );
 
-  const requestUserLocation = () => {
-    if (!navigator.geolocation) {
-      setNotice('Este navegador não liberou localização.');
-      return;
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      center: DEFAULT_CENTER,
+      zoom: 10.4,
+      attributionControl: false,
+      style: {
+        version: 8,
+        glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+      }
+    });
+
+    mapRef.current = map;
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
+
+    map.on('load', () => {
+      map.addSource('schools', {
+        type: 'geojson',
+        data: schoolsGeoJson([]),
+        cluster: true,
+        clusterMaxZoom: 14,
+        clusterRadius: 52
+      });
+
+      map.addLayer({
+        id: 'school-clusters',
+        type: 'circle',
+        source: 'schools',
+        filter: ['has', 'point_count'],
+        paint: {
+          'circle-color': ['step', ['get', 'point_count'], '#315fc9', 15, '#243ca8', 40, '#10243f'],
+          'circle-radius': ['step', ['get', 'point_count'], 20, 15, 26, 40, 32],
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#ffffff'
+        }
+      });
+
+      map.addLayer({
+        id: 'school-cluster-count',
+        type: 'symbol',
+        source: 'schools',
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': ['get', 'point_count_abbreviated'],
+          'text-size': 13,
+          'text-font': ['Open Sans Regular']
+        },
+        paint: { 'text-color': '#ffffff' }
+      });
+
+      map.addLayer({
+        id: 'school-points',
+        type: 'circle',
+        source: 'schools',
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-color': '#315fc9',
+          'circle-radius': 9,
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#ffffff'
+        }
+      });
+
+      map.on('click', 'school-clusters', (event) => {
+        const feature = map.queryRenderedFeatures(event.point, { layers: ['school-clusters'] })[0];
+        if (!feature || feature.geometry.type !== 'Point') return;
+        const coordinates = feature.geometry.coordinates as [number, number];
+        map.easeTo({ center: coordinates, zoom: Math.min(map.getZoom() + 2.2, 16), duration: 550 });
+      });
+
+      map.on('click', 'school-points', (event) => {
+        const feature = map.queryRenderedFeatures(event.point, { layers: ['school-points'] })[0];
+        const id = String(feature?.properties?.id || '');
+        if (!id) return;
+        setSelectedId(id);
+        if (feature?.geometry.type === 'Point') {
+          map.easeTo({ center: feature.geometry.coordinates as [number, number], zoom: Math.max(map.getZoom(), 14.5), duration: 450 });
+        }
+      });
+
+      ['school-clusters', 'school-points'].forEach((layerId) => {
+        map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = ''; });
+      });
+
+      setMapReady(true);
+    });
+
+    return () => {
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const source = map.getSource('schools') as GeoJSONSource | undefined;
+    source?.setData(schoolsGeoJson(filteredWithCoordinates));
+
+    if (!firstFitRef.current && filteredWithCoordinates.length > 0) {
+      const bounds = new maplibregl.LngLatBounds();
+      filteredWithCoordinates.forEach((unit) => {
+        const point = coordinatePoint(unit);
+        if (point) bounds.extend([point.longitude, point.latitude]);
+      });
+      map.fitBounds(bounds, { padding: 70, maxZoom: 12.8, duration: 0 });
+      firstFitRef.current = true;
     }
-    setNotice('Buscando sua localização...');
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setUserLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-        setNearestFirst(true);
-        setNotice('Localização ativada. Agora você pode gerar rota por proximidade quando as unidades tiverem coordenadas.');
-      },
-      () => setNotice('Não foi possível obter sua localização. Verifique a permissão do navegador.'),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 300000 }
-    );
-  };
+  }, [filteredWithCoordinates, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !userLocation) return;
+
+    userMarkerRef.current?.remove();
+    const markerElement = document.createElement('div');
+    markerElement.className = 'map-user-marker';
+    markerElement.title = 'Sua localização';
+    userMarkerRef.current = new maplibregl.Marker({ element: markerElement })
+      .setLngLat([userLocation.longitude, userLocation.latitude])
+      .addTo(map);
+  }, [userLocation, mapReady]);
 
   const openExternal = (url: string) => {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const selectUnit = (unit: UnidadeMapa) => {
+  const requestUserLocation = () => {
+    if (!navigator.geolocation) {
+      setNotice('Este aparelho/navegador não oferece localização.');
+      return;
+    }
+
+    setLocating(true);
+    setNotice('Buscando sua localização...');
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const location = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+        setUserLocation(location);
+        setNearestFirst(true);
+        setLocating(false);
+        setNotice('Localização ativada. A lista agora pode ordenar as escolas mais próximas.');
+        mapRef.current?.easeTo({ center: [location.longitude, location.latitude], zoom: 13.5, duration: 650 });
+      },
+      (error) => {
+        setLocating(false);
+        if (error.code === error.PERMISSION_DENIED) setNotice('A localização foi bloqueada. Autorize a localização do site no navegador e tente novamente.');
+        else if (error.code === error.TIMEOUT) setNotice('A localização demorou demais para responder. Tente novamente.');
+        else setNotice('Não foi possível obter sua localização neste momento.');
+      },
+      { enableHighAccuracy: true, timeout: 9000, maximumAge: 120000 }
+    );
+  };
+
+  const focusUnit = (unit: UnidadeMapa) => {
     setSelectedId(unit.id);
     setTab('mapa');
+    const point = coordinatePoint(unit);
+    if (point) mapRef.current?.easeTo({ center: [point.longitude, point.latitude], zoom: 15.2, duration: 600 });
+  };
+
+  const showAllPins = () => {
+    const map = mapRef.current;
+    if (!map || filteredWithCoordinates.length === 0) return;
+    const bounds = new maplibregl.LngLatBounds();
+    filteredWithCoordinates.forEach((unit) => {
+      const point = coordinatePoint(unit);
+      if (point) bounds.extend([point.longitude, point.latitude]);
+    });
+    map.fitBounds(bounds, { padding: 70, maxZoom: 13, duration: 650 });
   };
 
   const generateDailyRoute = () => {
-    const candidates = filtered.filter((unit) => unit.name && unit.name !== 'Unidade sem nome');
-    if (candidates.length === 0) {
-      setNotice('Nenhuma unidade encontrada no filtro atual. Limpe a busca ou pesquise outro bairro.');
-      return;
-    }
-
-    let route: RouteStop[];
-    let anchor: UnidadeMapa | null = null;
-    const isAnchorSearch = query.trim().length > 0 && candidates.length === 1;
-
-    if (isAnchorSearch) {
-      anchor = candidates[0];
-      route = buildRouteNearAnchor(anchor, unidades, routeLimit);
-      setRouteMode(`Rota a partir de ${stopTitle(anchor)}`);
-    } else {
-      route = buildRouteStops(candidates, userLocation, routeLimit);
-      setRouteMode(query.trim() ? `Rota do filtro: ${query.trim()}` : 'Rota geral');
-    }
-
+    const route = buildRouteStops(filtered, userLocation, routeLimit);
     setRouteStops(route);
     setTab('rotas');
-
-    const routeWithCoordinates = route.filter(hasCoordinates).length;
-    if (anchor) {
-      const sameBairroCount = route.filter((unit) => unit.id !== anchor?.id && sameNeighborhood(anchor as UnidadeMapa, unit)).length;
-      setNotice(`Rota criada a partir da escola pesquisada. Incluí ${sameBairroCount} unidade(s) do mesmo bairro e próximas na sequência.`);
-    } else if (!userLocation && routeWithCoordinates > 0) {
-      setNotice(`Rota criada com ${route.length} unidade(s). Para ordenar pela sua localização exata, clique em Minha localização.`);
-    } else if (routeWithCoordinates === 0) {
-      setNotice(`Rota criada com ${route.length} unidade(s) pelo endereço. Para cálculo real de proximidade, preencha latitude/longitude das unidades.`);
-    } else if (routeWithCoordinates < route.length) {
-      setNotice(`Rota criada com ${route.length} unidade(s). As unidades sem latitude/longitude foram colocadas no final.`);
-    } else {
-      setNotice(`Rota diária criada com ${route.length} unidade(s), em ordem aproximada de proximidade.`);
-    }
+    setNotice(route.length > 0 ? `Rota criada com ${route.length} parada(s).` : 'Nenhuma unidade encontrada para criar a rota.');
   };
 
-  const removeRouteStop = (id: string) => {
-    setRouteStops((current) => current.filter((item) => item.id !== id));
-  };
-
-  const openGoogleRoute = () => {
-    if (routeStops.length === 0) {
-      setNotice('Gere uma rota diária primeiro.');
-      return;
-    }
-    if (routeStops.length > 10) {
-      setNotice('O Google Maps será aberto com as 10 primeiras paradas da rota.');
-    }
-    openExternal(googleRouteUrl(routeStops, userLocation));
-  };
-
-  const copyRoute = async () => {
-    if (routeStops.length === 0) {
-      setNotice('Gere uma rota diária primeiro.');
-      return;
-    }
-    const text = `ROTA DIÁRIA - GINFOTOS 6ª CRE\n${routeMode ? `${routeMode}\n` : ''}\n${routeText(routeStops)}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setNotice('Roteiro copiado. Você pode colar no WhatsApp ou em uma mensagem.');
-    } catch {
-      setNotice('Não consegui copiar automaticamente. Selecione a lista da rota e copie manualmente.');
-    }
-  };
-
-  const nextStop = routeStops[0];
+  const routeTotalKm = routeStops.reduce((sum, item) => sum + (item.routeDistanceFromPrevious || 0), 0);
 
   return (
-    <div className="dashboard-page">
+    <div className="dashboard-page map-units-page">
       <div className="top-row">
         <div>
           <p className="page-label">Geolocalização</p>
           <h1>Mapa das Unidades</h1>
         </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button type="button" className="empty-button" onClick={requestUserLocation}>Minha localização</button>
+        <div className="top-actions">
+          <button type="button" className="empty-button" onClick={requestUserLocation} disabled={locating}>
+            {locating ? 'Localizando...' : '📍 Minha localização'}
+          </button>
           <button type="button" className="empty-button" onClick={loadUnidades}>Atualizar</button>
           <span className="status-pill">{filtered.length} unidade(s)</span>
         </div>
       </div>
 
-      <section className="page-card">
-        <p className="page-description">Para achar escolas próximas de uma unidade, pesquise a escola desejada e clique em Gerar rota diária. O app coloca essa escola como ponto de partida e busca unidades do mesmo bairro/próximas.</p>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginTop: 16 }}>
-          <input aria-label="Buscar escola ou bairro" placeholder="Buscar por bairro, escola, designação, endereço ou diretor" value={query} onChange={(event) => setQuery(event.target.value)} style={{ flex: '1 1 320px' }} />
-          <button type="button" className={tab === 'mapa' ? 'primary' : 'empty-button'} onClick={() => setTab('mapa')}>Mapa</button>
-          <button type="button" className={tab === 'lista' ? 'primary' : 'empty-button'} onClick={() => setTab('lista')}>Lista</button>
-          <button type="button" className={tab === 'rotas' ? 'primary' : 'empty-button'} onClick={() => setTab('rotas')}>Rotas do dia</button>
-          <button type="button" className="empty-button" onClick={() => { if (!userLocation) requestUserLocation(); setNearestFirst((value) => !value); }}>{nearestFirst ? 'Proximidade ativa' : 'Filtrar por proximidade'}</button>
+      <section className="page-card map-search-card">
+        <div className="map-search-row">
+          <div className="map-search-input-wrap">
+            <span aria-hidden="true">🔎</span>
+            <input
+              aria-label="Buscar escola ou bairro"
+              placeholder="Buscar por escola, designação, bairro, endereço ou diretor"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            {query && <button type="button" className="map-clear-search" onClick={() => setQuery('')} aria-label="Limpar busca">×</button>}
+          </div>
+          <button type="button" className={tab === 'mapa' ? 'primary' : 'empty-button'} onClick={() => setTab('mapa')}>🗺️ Mapa</button>
+          <button type="button" className={tab === 'lista' ? 'primary' : 'empty-button'} onClick={() => setTab('lista')}>☰ Lista</button>
+          <button type="button" className={tab === 'rotas' ? 'primary' : 'empty-button'} onClick={() => setTab('rotas')}>🚗 Rotas</button>
         </div>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginTop: 14 }}>
-          <label className="page-description" htmlFor="routeLimit" style={{ margin: 0 }}>Quantidade de escolas na rota:</label>
-          <select id="routeLimit" value={routeLimit} onChange={(event) => setRouteLimit(Number(event.target.value))} style={{ maxWidth: 110 }}>
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <button type="button" className="primary" onClick={generateDailyRoute}>Gerar rota diária</button>
+
+        <div className="map-filter-row">
+          <button
+            type="button"
+            className={nearestFirst ? 'map-filter-chip active' : 'map-filter-chip'}
+            onClick={() => {
+              if (!userLocation) requestUserLocation();
+              else setNearestFirst((value) => !value);
+            }}
+          >
+            📌 {nearestFirst ? 'Mais próximas primeiro' : 'Ordenar por proximidade'}
+          </button>
+          <span className="map-helper-text">{filteredWithCoordinates.length} com localização no mapa</span>
+          {filtered.length - filteredWithCoordinates.length > 0 && (
+            <span className="map-helper-text warning">{filtered.length - filteredWithCoordinates.length} sem coordenadas</span>
+          )}
         </div>
-        {notice && <p className="notice">{notice}</p>}
-        {unitsWithCoordinates === 0 && <p className="notice">A base atual ainda não tem latitude/longitude. A rota será gerada pelo endereço e pelo bairro. Para proximidade real, preencha as coordenadas na aba Unidades Escolares.</p>}
+
+        {notice && <p className="map-notice">{notice}</p>}
       </section>
 
-      {tab === 'rotas' && (
-        <section className="page-card">
-          <div className="recent-header">
+      {tab === 'mapa' && (
+        <section className="page-card map-main-card">
+          <div className="map-toolbar">
             <div>
-              <p className="page-label">Planejamento diário</p>
-              <h2>Rotas do dia</h2>
-              <p className="page-description">{routeMode || `Unidades com coordenadas no filtro atual: ${filteredWithCoordinates}. Sem coordenadas, a rota usa bairro/endereço.`}</p>
+              <strong>Unidades escolares da 6ª CRE</strong>
+              <span>Toque em um ponto para ver a escola e abrir a rota.</span>
             </div>
-            <span className="status-pill">{routeStops.length} parada(s)</span>
+            <button type="button" className="empty-button" onClick={showAllPins}>Ver todos os pins</button>
           </div>
 
-          {routeStops.length === 0 ? (
-            <div className="empty-state">
-              <p>Pesquise uma escola específica para gerar uma rota a partir dela, ou pesquise um bairro para montar uma rota do bairro.</p>
-              <button type="button" className="empty-button" onClick={generateDailyRoute}>Gerar rota agora</button>
-            </div>
-          ) : (
-            <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, marginBottom: 18 }}>
-                <article className="stat-card"><div className="stat-icon">🚗</div><div><p className="stat-value">{routeStops.length}</p><p className="stat-label">Paradas</p></div></article>
-                <article className="stat-card"><div className="stat-icon">📍</div><div><p className="stat-value">{totalRouteKm.toFixed(1)} km</p><p className="stat-label">Distância aproximada</p></div></article>
-                <article className="stat-card"><div className="stat-icon">▶️</div><div><p className="stat-value">1ª</p><p className="stat-label">{nextStop ? stopTitle(nextStop) : 'Sem parada'}</p></div></article>
-              </div>
+          <div className="map-stage">
+            <div ref={mapContainerRef} className="school-map-canvas" aria-label="Mapa das unidades escolares" />
 
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-                <button type="button" className="primary" onClick={openGoogleRoute}>Abrir rota completa no Google Maps</button>
-                {nextStop && <button type="button" className="empty-button" onClick={() => openExternal(wazeUrl(nextStop))}>Abrir próxima no Waze</button>}
-                <button type="button" className="empty-button" onClick={copyRoute}>Copiar roteiro</button>
-                <button type="button" className="empty-button" onClick={() => setRouteStops([])}>Limpar rota</button>
-              </div>
+            {!mapReady && <div className="map-loading-overlay">Carregando mapa...</div>}
 
-              <div style={{ overflowX: 'auto' }}>
-                <table className="table-list">
-                  <thead>
-                    <tr>
-                      <th>Ordem</th>
-                      <th>Unidade</th>
-                      <th>Bairro</th>
-                      <th>Endereço</th>
-                      <th>Trecho aprox.</th>
-                      <th>Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {routeStops.map((unit, index) => (
-                      <tr key={`route-${unit.id}`}>
-                        <td><strong>{index + 1}</strong></td>
-                        <td><strong>{stopTitle(unit)}</strong><br /><span className="page-description">{unit.diretor_geral || 'Direção não informada'}</span></td>
-                        <td>{unit.bairro || '—'}</td>
-                        <td>{unit.address || '—'}</td>
-                        <td>{unit.routeDistanceFromPrevious === null || unit.routeDistanceFromPrevious === undefined ? (index === 0 ? 'Ponto inicial' : 'Mesmo bairro/endereço') : `${unit.routeDistanceFromPrevious.toFixed(1)} km`}</td>
-                        <td><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" className="empty-link" onClick={() => selectUnit(unit)}>Mapa</button><button type="button" className="empty-link" onClick={() => openExternal(wazeUrl(unit))}>Waze</button><button type="button" className="empty-link danger-link" onClick={() => removeRouteStop(unit.id)}>Remover</button></div></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {mapReady && filteredWithCoordinates.length === 0 && (
+              <div className="map-empty-overlay">
+                <strong>Nenhuma escola deste filtro possui coordenadas.</strong>
+                <span>A unidade continua disponível na Lista e pode ser aberta no Waze ou Google Maps pelo endereço.</span>
+                <button type="button" className="empty-button" onClick={() => setTab('lista')}>Abrir Lista</button>
               </div>
-            </>
-          )}
-        </section>
-      )}
+            )}
 
-      {tab === 'mapa' && selected && (
-        <section className="page-card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(320px, 0.8fr)', gap: 0 }}>
-            <div style={{ minHeight: 520, background: '#dbeafe' }}>
-              <iframe title="Mapa da unidade escolar" src={googleMapsEmbedUrl(selected)} width="100%" height="520" style={{ border: 0, display: 'block' }} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
-            </div>
-            <aside style={{ padding: 22, borderLeft: '1px solid #dbe3ef', background: '#fff' }}>
-              <p className="page-label">Unidade selecionada</p>
-              <h2 style={{ marginTop: 6 }}>{selected.designacao ? `${selected.designacao} - ${selected.name}` : selected.name}</h2>
-              <p className="page-description"><strong>Endereço:</strong> {selected.address || 'Não informado'}</p>
-              <p className="page-description"><strong>Bairro:</strong> {selected.bairro || 'Não informado'}</p>
-              <p className="page-description"><strong>Diretor(a):</strong> {selected.diretor_geral || 'Não informado'}</p>
-              <p className="page-description"><strong>Telefone:</strong> {selected.telefone || 'Não informado'}</p>
-              <p className="page-description"><strong>Distância:</strong> {distanceInKm(selected, userLocation) === null ? 'Indisponível' : `${distanceInKm(selected, userLocation)?.toFixed(1)} km`}</p>
-              <div style={{ display: 'grid', gap: 10, marginTop: 18 }}>
-                <button type="button" className="primary large" onClick={() => openExternal(wazeUrl(selected))}>Abrir no Waze</button>
-                <button type="button" className="empty-button" onClick={() => openExternal(googleMapsOpenUrl(selected))}>Abrir no Google Maps</button>
-                <button type="button" className="empty-button" onClick={() => { setQuery(selected.name); setTab('rotas'); }}>Montar rota a partir desta escola</button>
-                <button type="button" className="empty-button" onClick={() => setTab('lista')}>Ver lista de unidades</button>
-              </div>
-            </aside>
+            <button type="button" className="map-location-fab" onClick={requestUserLocation} title="Centralizar na minha localização" aria-label="Minha localização">⌖</button>
+
+            {selected && (
+              <aside className="map-school-sheet">
+                <button type="button" className="map-sheet-close" onClick={() => setSelectedId('')} aria-label="Fechar">×</button>
+                <div className="map-school-heading">
+                  <div className="map-school-icon">🏫</div>
+                  <div>
+                    <span className="map-school-designation">{selected.designacao || 'Unidade escolar'}</span>
+                    <h2>{selected.name}</h2>
+                  </div>
+                </div>
+                <p className="map-school-address">📍 {fullAddress(selected) || 'Endereço não informado'}</p>
+                <div className="map-distance-pill">⌖ {distanceLabel(selected, userLocation)}</div>
+                <div className="map-school-actions">
+                  <button type="button" className="primary large" onClick={() => openExternal(wazeUrl(selected))}>Abrir no Waze</button>
+                  <button type="button" className="empty-button" onClick={() => openExternal(googleMapsUrl(selected))}>Abrir no Google Maps</button>
+                </div>
+                <details className="map-school-details">
+                  <summary>Informações da unidade</summary>
+                  <p><strong>Diretor(a):</strong> {selected.diretor_geral || 'Não informado'}</p>
+                  <p><strong>Telefone:</strong> {selected.telefone || 'Não informado'}</p>
+                  <p><strong>Bairro:</strong> {selected.bairro || 'Não informado'}</p>
+                </details>
+              </aside>
+            )}
           </div>
         </section>
       )}
 
       {tab === 'lista' && (
         <section className="page-card">
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table-list">
-              <thead>
-                <tr>
-                  <th>Designação</th>
-                  <th>Unidade</th>
-                  <th>Bairro</th>
-                  <th>Endereço</th>
-                  <th>Distância</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((unit) => {
-                  const distance = distanceInKm(unit, userLocation);
-                  return (
-                    <tr key={unit.id}>
-                      <td>{unit.designacao || '—'}</td>
-                      <td><strong>{unit.name}</strong><br /><span className="page-description">{unit.diretor_geral || 'Direção não informada'}</span></td>
-                      <td>{unit.bairro || '—'}</td>
-                      <td>{unit.address || '—'}</td>
-                      <td>{distance === null ? '—' : `${distance.toFixed(1)} km`}</td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          <button type="button" className="empty-link" onClick={() => selectUnit(unit)}>Ver mapa</button>
-                          <button type="button" className="empty-link" onClick={() => { setQuery(unit.name); setTab('rotas'); }}>Rota a partir daqui</button>
-                          <button type="button" className="empty-link" onClick={() => openExternal(wazeUrl(unit))}>Waze</button>
-                          <button type="button" className="empty-link" onClick={() => openExternal(googleMapsOpenUrl(unit))}>Google Maps</button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="recent-header map-list-header">
+            <div>
+              <p className="page-label">Unidades encontradas</p>
+              <h2>{filtered.length} escola(s)</h2>
+            </div>
+            <button type="button" className="empty-button" onClick={() => { if (!userLocation) requestUserLocation(); else setNearestFirst(true); }}>Mostrar mais próximas</button>
           </div>
+
+          {filtered.length === 0 ? (
+            <div className="empty-state"><p>Nenhuma unidade encontrada. Tente buscar outro nome ou bairro.</p></div>
+          ) : (
+            <div className="map-school-list">
+              {filtered.map((unit) => (
+                <article className="map-school-list-card" key={unit.id}>
+                  <button type="button" className="map-school-list-main" onClick={() => focusUnit(unit)}>
+                    <div className="map-school-list-icon">🏫</div>
+                    <div>
+                      <span>{unit.designacao || 'Unidade escolar'}</span>
+                      <strong>{unit.name}</strong>
+                      <small>{unit.bairro || 'Bairro não informado'} · {distanceLabel(unit, userLocation)}</small>
+                      <small>{unit.address || 'Endereço não informado'}</small>
+                    </div>
+                  </button>
+                  <div className="map-school-list-actions">
+                    <button type="button" className="primary" onClick={() => openExternal(wazeUrl(unit))}>Waze</button>
+                    <button type="button" className="empty-button" onClick={() => openExternal(googleMapsUrl(unit))}>Google Maps</button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === 'rotas' && (
+        <section className="page-card">
+          <div className="recent-header map-list-header">
+            <div>
+              <p className="page-label">Planejamento</p>
+              <h2>Rotas do dia</h2>
+              <p className="page-description">Monte uma sequência de escolas e abra o trajeto no Google Maps.</p>
+            </div>
+            <span className="status-pill">{routeStops.length} parada(s)</span>
+          </div>
+
+          <div className="map-route-controls">
+            <label htmlFor="routeLimit">Quantidade de escolas</label>
+            <select id="routeLimit" value={routeLimit} onChange={(event) => setRouteLimit(Number(event.target.value))}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <button type="button" className="primary" onClick={generateDailyRoute}>Gerar rota</button>
+            {routeStops.length > 0 && <button type="button" className="empty-button" onClick={() => openExternal(googleRouteUrl(routeStops, userLocation))}>Abrir rota no Google Maps</button>}
+          </div>
+
+          {routeStops.length > 0 && (
+            <>
+              <div className="map-route-summary">
+                <span><strong>{routeStops.length}</strong> paradas</span>
+                <span><strong>{routeTotalKm.toFixed(1)} km</strong> aprox. entre pontos com coordenadas</span>
+              </div>
+              <div className="map-school-list">
+                {routeStops.map((unit, index) => (
+                  <article className="map-school-list-card" key={`route-${unit.id}`}>
+                    <button type="button" className="map-route-order" onClick={() => focusUnit(unit)}>{index + 1}</button>
+                    <div className="map-route-unit">
+                      <strong>{stopTitle(unit)}</strong>
+                      <small>{unit.address || 'Endereço não informado'} · {unit.bairro || ''}</small>
+                    </div>
+                    <div className="map-school-list-actions">
+                      <button type="button" className="primary" onClick={() => openExternal(wazeUrl(unit))}>Waze</button>
+                      <button type="button" className="empty-button" onClick={() => setRouteStops((current) => current.filter((item) => item.id !== unit.id))}>Remover</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+
+          {routeStops.length === 0 && (
+            <div className="empty-state">
+              <p>Use o filtro acima para escolher um bairro ou escola e clique em Gerar rota.</p>
+              <button type="button" className="empty-button" onClick={generateDailyRoute}>Gerar rota agora</button>
+            </div>
+          )}
         </section>
       )}
     </div>
