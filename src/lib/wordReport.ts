@@ -23,6 +23,8 @@ export interface WordReportPhoto {
   name: string;
   caption: string;
   dataUrl?: string;
+  url?: string;
+  path?: string;
 }
 
 export interface WordReportVisit {
@@ -195,6 +197,25 @@ function pageFooter() {
   });
 }
 
+async function urlToDataUrl(url: string) {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Não foi possível baixar uma das fotos do relatório.');
+  const blob = await response.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Falha ao converter imagem.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function resolvePhotoDataUrl(photo?: WordReportPhoto) {
+  if (!photo) return '';
+  if (photo.dataUrl?.startsWith('data:image/')) return photo.dataUrl;
+  if (photo.url) return urlToDataUrl(photo.url);
+  return '';
+}
+
 async function standardizePhotoDataUrl(dataUrl: string) {
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
@@ -223,9 +244,10 @@ async function standardizePhotoDataUrl(dataUrl: string) {
 async function photoCell(photo?: WordReportPhoto) {
   const children: Paragraph[] = [];
 
-  if (photo?.dataUrl) {
-    try {
-      const standardized = await standardizePhotoDataUrl(photo.dataUrl);
+  try {
+    const source = await resolvePhotoDataUrl(photo);
+    if (source) {
+      const standardized = await standardizePhotoDataUrl(source);
       children.push(new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [new ImageRun({
@@ -234,17 +256,17 @@ async function photoCell(photo?: WordReportPhoto) {
           type: getImageType(standardized)
         })]
       }));
-    } catch {
-      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não carregada', { color: '64748B' })] }));
+    } else {
+      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não incorporada', { color: '64748B' })] }));
     }
-  } else {
-    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não incorporada', { color: '64748B' })] }));
+  } catch {
+    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [text('Imagem não carregada', { color: '64748B' })] }));
   }
 
   children.push(new Paragraph({
     spacing: { before: 50 },
     alignment: AlignmentType.LEFT,
-    children: [text(clean(photo?.caption || 'Sem legenda.'), { bold: true, size: 20 })]
+    children: [text(clean(photo?.caption || photo?.name || 'Sem legenda.'), { bold: true, size: 20 })]
   }));
 
   return new TableCell({
@@ -290,7 +312,7 @@ export async function downloadWordReport(visit: WordReportVisit) {
       infoRow('Designação + Unidade Escolar', `${clean(visit.designacao)} - ${clean(visit.unidade)}`),
       infoRow('Endereço + Bairro', `${clean(visit.endereco)} - ${clean(visit.bairro)}`),
       infoRow('Diretor(a) Geral', clean(visit.diretorGeral)),
-      infoRow('Representante E/GIN/6ª CRE', 'Engenheira Márcia Braga.')
+      infoRow('Representante E/GIN/6ª CRE', clean(visit.representante || 'Engenheira Márcia Braga'))
     ]
   });
 
@@ -323,5 +345,5 @@ export async function downloadWordReport(visit: WordReportVisit) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
