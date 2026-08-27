@@ -99,6 +99,7 @@ async function readJsonResponse(response: Response) {
 }
 
 async function saveVisitViaServer(visit: {
+  client_id: string;
   visitor_name: string;
   unidade_id: string;
   visit_date: string;
@@ -106,13 +107,14 @@ async function saveVisitViaServer(visit: {
   created_by: string;
   photos: { name: string; caption: string; dataUrl?: string }[];
 }) {
-  // Primeiro salva somente o texto. Assim a requisicao nunca fica grande demais por causa das fotos.
   const response = await fetch('/api/visitas', {
     method: 'POST',
+    credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
     body: JSON.stringify({
       visit: {
+        client_id: visit.client_id,
         visitor_name: visit.visitor_name,
         unidade_id: visit.unidade_id,
         visit_date: visit.visit_date,
@@ -125,11 +127,11 @@ async function saveVisitViaServer(visit: {
   const savedVisit = payload.visit as { id?: string } | undefined;
   if (!response.ok || !savedVisit?.id) throw new Error(String(payload.error || 'API /api/visitas não salvou a visita.'));
 
-  // Depois envia uma foto por vez. Funciona melhor em Android, iPhone e internet movel.
   for (const photo of visit.photos) {
     if (!photo.dataUrl) continue;
     const photoResponse = await fetch(`/api/visitas?action=add-photo&id=${encodeURIComponent(savedVisit.id)}&ts=${Date.now()}`, {
       method: 'POST',
+      credentials: 'same-origin',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
       body: JSON.stringify({ photo })
@@ -259,6 +261,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     const compactPhotos = photos.map((photo: PhotoItem) => ({ name: photo.file.name, caption: photo.caption, dataUrl: photo.dataUrl }));
 
     const visitRecord = {
+      client_id: localId,
       visitor_name: representante,
       unidade_id: selectedUnidade.id,
       visit_date: visitDate,
