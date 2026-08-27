@@ -1,15 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { setSessionCookie } from './_session.js';
 
-const DIRECT_LINKS = {
-  '-y0DKZEqABTh1XNOusNDPb7jMOHP_n_J': {
-    email: 'profaceci@gmail.com',
-    name: 'Cecília',
-    role: 'gin',
-    status: 'ATIVO'
-  }
-};
-
 function normalizeSupabaseUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -33,13 +24,6 @@ export default async function handler(req, res) {
   const token = String(req.body?.token || '').trim();
   if (!token) return res.status(400).json({ error: 'Token ausente.' });
 
-  const directUser = DIRECT_LINKS[token];
-  if (directUser && directUser.status === 'ATIVO') {
-    const user = safeUser(directUser);
-    setSessionCookie(res, user);
-    return res.status(200).json({ ok: true, user });
-  }
-
   const supabaseUrl = normalizeSupabaseUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
   const supabaseServiceKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
   if (!supabaseUrl || !supabaseServiceKey) return res.status(500).json({ error: 'Configuração do Supabase ausente no Vercel.' });
@@ -56,6 +40,7 @@ export default async function handler(req, res) {
     .maybeSingle();
 
   if (error || !data) return res.status(401).json({ error: 'Link de acesso não encontrado ou bloqueado.' });
+  if (String(data.role || '').toLowerCase() !== 'gin') return res.status(403).json({ error: 'Este link não possui perfil GIN válido.' });
 
   const user = safeUser(data);
   setSessionCookie(res, user);
