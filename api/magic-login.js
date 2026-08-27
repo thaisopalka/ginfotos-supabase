@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { setSessionCookie } from './_session.js';
 
 const DIRECT_LINKS = {
   '-y0DKZEqABTh1XNOusNDPb7jMOHP_n_J': {
@@ -9,7 +10,24 @@ const DIRECT_LINKS = {
   }
 };
 
+function normalizeSupabaseUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try { return new URL(raw).origin; }
+  catch { return raw.replace(/\/+rest\/v1\/?$/i, '').replace(/\/+$/, ''); }
+}
+
+function safeUser(user) {
+  return {
+    email: String(user.email || '').toLowerCase(),
+    name: String(user.name || ''),
+    role: String(user.role || 'gin'),
+    status: 'ATIVO'
+  };
+}
+
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const token = String(req.body?.token || '').trim();
@@ -17,22 +35,18 @@ export default async function handler(req, res) {
 
   const directUser = DIRECT_LINKS[token];
   if (directUser && directUser.status === 'ATIVO') {
-    return res.status(200).json({
-      ok: true,
-      user: {
-        email: directUser.email,
-        name: directUser.name,
-        role: directUser.role,
-        status: 'ATIVO'
-      }
-    });
+    const user = safeUser(directUser);
+    setSessionCookie(res, user);
+    return res.status(200).json({ ok: true, user });
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl = normalizeSupabaseUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+  const supabaseServiceKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
   if (!supabaseUrl || !supabaseServiceKey) return res.status(500).json({ error: 'Configuração do Supabase ausente no Vercel.' });
 
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  });
 
   const { data, error } = await supabase
     .from('ginfotos_access_links')
@@ -43,13 +57,7 @@ export default async function handler(req, res) {
 
   if (error || !data) return res.status(401).json({ error: 'Link de acesso não encontrado ou bloqueado.' });
 
-  return res.status(200).json({
-    ok: true,
-    user: {
-      email: data.email,
-      name: data.name,
-      role: data.role || 'gin',
-      status: 'ATIVO'
-    }
-  });
+  const user = safeUser(data);
+  setSessionCookie(res, user);
+  return res.status(200).json({ ok: true, user });
 }
