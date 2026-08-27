@@ -12,17 +12,12 @@ type LoginResponse = {
 async function readLoginResponse(response: Response): Promise<LoginResponse> {
   const text = await response.text();
   if (!text) return {};
-
-  try {
-    return JSON.parse(text) as LoginResponse;
-  } catch {
-    return { error: text };
-  }
+  try { return JSON.parse(text) as LoginResponse; }
+  catch { return { error: text }; }
 }
 
 function friendlyLoginError(status: number, error?: string) {
   const normalized = (error || '').toLowerCase();
-
   if (status === 404) return 'O backend de login ainda não foi publicado no Vercel. Faça o redeploy e tente novamente.';
   if (normalized.includes('supabase') || normalized.includes('configuration') || normalized.includes('configur')) return 'Login pelo Supabase ainda não está configurado. Use um link de acesso direto.';
   if (status === 401) return error || 'E-mail ou senha provisória incorretos.';
@@ -44,6 +39,7 @@ export default function Login() {
     setMessage('Validando link de acesso...');
     fetch('/api/magic-login', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token })
     })
@@ -61,21 +57,14 @@ export default function Login() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
     const trimmedEmail = email.trim().toLowerCase();
+
     if (!trimmedEmail.includes('@') || !trimmedEmail.includes('.')) {
       setMessage('Digite um e-mail completo. Exemplo: thaisopalka@gmail.com');
       return;
     }
-
     if (!password) {
       setMessage('Digite a senha.');
-      return;
-    }
-
-    if (trimmedEmail === 'thaisopalka@gmail.com' && password === '12345678') {
-      setCurrentUser({ email: 'thaisopalka@gmail.com', name: 'Thaís Opalka', role: 'admin', status: 'ATIVO' });
-      window.location.assign('/');
       return;
     }
 
@@ -85,10 +74,10 @@ export default function Login() {
     try {
       const response = await fetch('/api/login', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmedEmail, password })
       });
-
       const data = await readLoginResponse(response);
 
       if (!response.ok) {
@@ -129,7 +118,6 @@ export default function Login() {
         </form>
 
         <p className="login-desc" style={{ marginTop: 16 }}>Usuários autorizados também podem entrar pelo link de acesso direto enviado pela administradora.</p>
-
         {message && <p className="notice">{message}</p>}
       </div>
     </div>
