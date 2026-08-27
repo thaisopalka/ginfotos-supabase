@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
+import { requireSession } from './_session.js';
 
 const PHOTO_BUCKET = 'visita-fotos';
 const PHOTO_MARKER = 'GINFOTOS_JSON:';
+const CLIENT_MARKER = 'GINFOTOS_CLIENT_ID:';
 
 function clean(value) {
   return value === null || value === undefined ? '' : String(value).trim();
@@ -14,6 +16,11 @@ function safeName(value, fallback = 'foto.jpg') {
     .replace(/[^a-zA-Z0-9_.-]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return name || fallback;
+}
+
+function extractClientId(notes) {
+  const line = clean(notes).split('\n').find((item) => item.trim().startsWith(CLIENT_MARKER));
+  return line ? clean(line.slice(CLIENT_MARKER.length)) : '';
 }
 
 function parsePhotoPayload(notes) {
@@ -58,11 +65,8 @@ function buildSupabaseCandidates() {
   const add = (url, key, label) => {
     if (!url || !key) return;
     let normalizedUrl = url;
-    try {
-      normalizedUrl = new URL(url).origin;
-    } catch {
-      return;
-    }
+    try { normalizedUrl = new URL(url).origin; }
+    catch { return; }
     const signature = `${normalizedUrl}|${key.slice(0, 12)}`;
     if (seen.has(signature)) return;
     seen.add(signature);
@@ -84,9 +88,7 @@ function buildSupabaseCandidates() {
 
 async function getWorkingSupabase() {
   const candidates = buildSupabaseCandidates();
-  if (candidates.length === 0) {
-    throw new Error('Variaveis do Supabase ausentes no Vercel.');
-  }
+  if (candidates.length === 0) throw new Error('Variaveis do Supabase ausentes no Vercel.');
 
   const errors = [];
   for (const candidate of candidates) {
@@ -98,7 +100,6 @@ async function getWorkingSupabase() {
       errors.push(`${candidate.label}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-
   throw new Error(`Nao foi possivel conectar ao Supabase. ${errors.join(' | ')}`);
 }
 
@@ -108,7 +109,7 @@ async function ensurePhotoBucket(client) {
     const exists = Array.isArray(data) && data.some((bucket) => bucket.id === PHOTO_BUCKET || bucket.name === PHOTO_BUCKET);
     if (!exists) await client.storage.createBucket(PHOTO_BUCKET, { public: false });
   } catch {
-    // Se nao houver permissao para criar, o upload abaixo retorna o erro real.
+    // O upload abaixo retorna o erro real se o bucket nao estiver disponivel.
   }
 }
 
@@ -119,6 +120,24 @@ async function signedUrlForPath(client, path) {
     return error ? '' : clean(data?.signedUrl);
   } catch {
     return '';
+  }
+}
+
+async function listStructuredPhotos(client, visitId) {
+  try {
+    const { data, error } = await client
+      .from('fotos_visita')
+      .select('storage_path, legenda, ordem')
+      .eq('visita_id', visitId)
+      .order('ordem', { ascending: true });
+    if (error || !Array.isArray(data)) return [];
+    return data.map((item) => ({
+      name: clean(item.storage_path).split('/').pop() || 'Foto da visita',
+      caption: clean(item.legenda),
+      path: clean(item.storage_path)
+    })).filter((item) => item.path);
+  } catch {
+    return [];
   }
 }
 
@@ -141,6 +160,9 @@ async function hydratePhotos(client, row, includeLegacyStorage = false) {
   const parsed = parsePhotoPayload(row.notes);
   const photoMap = new Map();
 
+  const structured = await listStructuredPhotos(client, row.id);
+  for (const photo of structured) photoMap.set(photo.path, photo);
+
   for (const photo of parsed.photos) {
     const normalized = {
       name: clean(photo?.name || 'Foto da visita'),
@@ -149,7 +171,7 @@ async function hydratePhotos(client, row, includeLegacyStorage = false) {
       dataUrl: clean(photo?.dataUrl)
     };
     const key = normalized.path || normalized.dataUrl || normalized.name;
-    if (key) photoMap.set(key, normalized);
+    if (key && !photoMap.has(key)) photoMap.set(key, normalized);
   }
 
   if (includeLegacyStorage) {
@@ -179,6 +201,7 @@ function normalizeVisit(row, photos = null, notesOverride = null) {
   const parsed = parsePhotoPayload(notesOverride === null ? row.notes : notesOverride);
   return {
     id: row.id,
+    client_id: clean(row.client_id),
     visitor_name: clean(row.visitor_name),
     unidade_id: clean(row.unidade_id),
     visit_date: clean(row.visit_date),
@@ -188,6 +211,24 @@ function normalizeVisit(row, photos = null, notesOverride = null) {
     photo_count: Array.isArray(photos) ? photos.length : parsed.photos.length,
     photos: Array.isArray(photos) ? photos : []
   };
+}
+
+async function registerPhotoLink(client, visitId, metadata) {
+  if (!metadata?.path) return;
+  let order = 0;
+  try {
+    const { count } = await client.from('fotos_visita').select('id', { count: 'exact', head: true }).eq('visita_id', visitId);
+    order = Number(count || 0);
+  } catch { order = 0; }
+
+  await client.from('fotos_visita').upsert({
+    visita_id: visitId,
+    storage_path: metadata.path,
+    arquivo_url: metadata.path,
+    legenda: clean(metadata.caption),
+    ordem: order,
+    status_legenda: clean(metadata.caption) ? 'COM_LEGENDA' : 'SEM_LEGENDA'
+  }, { onConflict: 'storage_path' });
 }
 
 async function uploadSinglePhoto(client, visitId, photo, index) {
@@ -207,12 +248,11 @@ async function uploadSinglePhoto(client, visitId, photo, index) {
       upsert: true
     });
     if (error) {
-      return {
-        metadata: { name: original, caption: clean(photo?.caption), dataUrl: clean(photo?.dataUrl) },
-        error: error.message
-      };
+      return { metadata: { name: original, caption: clean(photo?.caption), dataUrl: clean(photo?.dataUrl) }, error: error.message };
     }
-    return { metadata: { name: original, caption: clean(photo?.caption), path }, error: '' };
+    const metadata = { name: original, caption: clean(photo?.caption), path };
+    await registerPhotoLink(client, visitId, metadata);
+    return { metadata, error: '' };
   } catch (error) {
     return {
       metadata: { name: original, caption: clean(photo?.caption), dataUrl: clean(photo?.dataUrl) },
@@ -258,14 +298,13 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
 
+  const sessionUser = requireSession(req, res);
+  if (!sessionUser) return;
+
   let active;
-  try {
-    active = await getWorkingSupabase();
-  } catch (error) {
-    return res.status(503).json({
-      error: error instanceof Error ? error.message : String(error),
-      data: []
-    });
+  try { active = await getWorkingSupabase(); }
+  catch (error) {
+    return res.status(503).json({ error: error instanceof Error ? error.message : String(error), data: [] });
   }
 
   const supabase = active.client;
@@ -288,12 +327,11 @@ export default async function handler(req, res) {
     try {
       const { data, error } = await supabase
         .from('visitas')
-        .select('id, visitor_name, unidade_id, visit_date, created_by, created_at')
+        .select('id, client_id, visitor_name, unidade_id, visit_date, created_by, created_at')
         .order('visit_date', { ascending: false })
         .limit(1000);
 
       if (error) return res.status(500).json({ error: error.message, data: [] });
-
       const unitMap = await readUnitMap(supabase);
       const list = (data || []).map((row) => {
         const unitNotes = unitMap.get(clean(row.unidade_id)) || '';
@@ -348,37 +386,46 @@ export default async function handler(req, res) {
     try {
       const visit = body.visit || body;
       const legacyPhotos = Array.isArray(visit.photos || visit.fotos) ? (visit.photos || visit.fotos).slice(0, 8) : [];
+      const cleanNotes = parsePhotoPayload(clean(visit.notes || '')).text;
+      const clientId = clean(visit.client_id || extractClientId(cleanNotes));
+
+      if (clientId) {
+        const { data: existing, error: existingError } = await supabase.from('visitas').select('*').eq('client_id', clientId).maybeSingle();
+        if (existingError) return res.status(500).json({ error: existingError.message });
+        if (existing) {
+          const photos = await hydratePhotos(supabase, existing, true);
+          return res.status(200).json({ ok: true, deduplicated: true, source: active.label, visit: normalizeVisit(existing, photos) });
+        }
+      }
+
       const record = {
+        client_id: clientId || null,
         visitor_name: clean(visit.visitor_name || visit.representante || 'ENGA. MARCIA BRAGA'),
         unidade_id: clean(visit.unidade_id || visit.designacao || ''),
         visit_date: clean(visit.visit_date || new Date().toISOString().slice(0, 10)),
-        notes: parsePhotoPayload(clean(visit.notes || '')).text,
-        created_by: clean(visit.created_by || 'app')
+        notes: cleanNotes,
+        created_by: clean(visit.created_by || sessionUser.email || 'app')
       };
 
-      const { data: inserted, error: insertError } = await supabase
-        .from('visitas')
-        .insert([record])
-        .select('*')
-        .single();
-      if (insertError) return res.status(500).json({ error: insertError.message });
+      const { data: inserted, error: insertError } = await supabase.from('visitas').insert([record]).select('*').single();
+      if (insertError) {
+        if (clientId && String(insertError.code || '') === '23505') {
+          const { data: existing } = await supabase.from('visitas').select('*').eq('client_id', clientId).maybeSingle();
+          if (existing) {
+            const photos = await hydratePhotos(supabase, existing, true);
+            return res.status(200).json({ ok: true, deduplicated: true, source: active.label, visit: normalizeVisit(existing, photos) });
+          }
+        }
+        return res.status(500).json({ error: insertError.message });
+      }
 
       if (legacyPhotos.length > 0) {
         const uploaded = await uploadVisitPhotos(supabase, inserted.id, legacyPhotos);
         const notes = withPhotoPayload(record.notes, uploaded.metadata);
-        const { data: updated, error: updateError } = await supabase
-          .from('visitas')
-          .update({ notes })
-          .eq('id', inserted.id)
-          .select('*')
-          .single();
+        const { data: updated, error: updateError } = await supabase.from('visitas').update({ notes }).eq('id', inserted.id).select('*').single();
         const finalRow = !updateError && updated ? updated : { ...inserted, notes };
-        return res.status(200).json({
-          ok: true,
-          source: active.label,
-          visit: normalizeVisit(finalRow, null),
-          photo_errors: uploaded.errors
-        });
+        const photos = await hydratePhotos(supabase, finalRow, false);
+        return res.status(200).json({ ok: true, source: active.label, visit: normalizeVisit(finalRow, photos), photo_errors: uploaded.errors });
       }
 
       return res.status(200).json({ ok: true, source: active.label, visit: normalizeVisit(inserted, []) });
