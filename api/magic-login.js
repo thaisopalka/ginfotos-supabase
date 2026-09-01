@@ -40,7 +40,9 @@ export default async function handler(req, res) {
     .maybeSingle();
 
   if (error || !data) return res.status(401).json({ error: 'Link de acesso não encontrado ou bloqueado.' });
-  if (String(data.role || '').toLowerCase() !== 'gin') return res.status(403).json({ error: 'Este link não possui perfil GIN válido.' });
+  if (!['gin', 'admin'].includes(String(data.role || '').toLowerCase())) {
+    return res.status(403).json({ error: 'Este link não possui perfil de acesso válido.' });
+  }
 
   const user = safeUser(data);
   setSessionCookie(res, user);
