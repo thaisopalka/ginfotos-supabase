@@ -49,6 +49,18 @@ const fallbackUnidades: UnidadeApp[] = [
 const visitTypes = ['VISTORIA TECNICA', 'INAUGURACAO DE GET', 'VISTORIA GET', 'OBRA', 'OUTROS'];
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
 
+function unidadeStableKey(item: UnidadeApp) {
+  const designation = String(item.designacao || '').trim();
+  if (designation) return `d:${designation.toLowerCase()}`;
+  const name = String(item.name || '').trim();
+  if (name) return `n:${name.toLowerCase()}`;
+  return `i:${String(item.id || '').trim().toLowerCase()}`;
+}
+
+function findUnitByStableKey(items: UnidadeApp[], key: string) {
+  return items.find((item) => unidadeStableKey(item) === key);
+}
+
 function loadLocalVisits(): LocalVisitRecord[] {
   try {
     return JSON.parse(localStorage.getItem(LOCAL_VISITS_KEY) || '[]') as LocalVisitRecord[];
@@ -64,8 +76,6 @@ function saveLocalVisit(record: LocalVisitRecord) {
   try {
     localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify(next));
   } catch {
-    // Relatórios com dezenas/centenas de fotos podem ultrapassar o limite do localStorage.
-    // Nesse caso mantemos localmente só os metadados; as imagens ficam no servidor central.
     const compact = next.map((visit) => ({
       ...visit,
       fotos: (visit.fotos || []).map((photo) => ({ name: photo.name, caption: photo.caption }))
@@ -167,7 +177,7 @@ async function saveVisitViaServer(
 
 export default function NovaVisita({ profile }: NovaVisitaProps) {
   const [unidades, setUnidades] = useState<UnidadeApp[]>(fallbackUnidades);
-  const [unidadeId, setUnidadeId] = useState(fallbackUnidades[0].id);
+  const [unidadeKey, setUnidadeKey] = useState(unidadeStableKey(fallbackUnidades[0]));
   const [unidadeQuery, setUnidadeQuery] = useState('');
   const [visitDate, setVisitDate] = useState(todayDate());
   const [tipo, setTipo] = useState(visitTypes[0]);
@@ -182,18 +192,25 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   const captureInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const preserveSelection = (items: UnidadeApp[]) => {
+    setUnidadeKey((current) => {
+      if (findUnitByStableKey(items, current)) return current;
+      return items[0] ? unidadeStableKey(items[0]) : '';
+    });
+  };
+
   const loadUnidades = async () => {
     const localUnits = loadLocalUnidades<UnidadeApp>();
     const initialUnits = mergeUnidades(localUnits, fallbackUnidades) as UnidadeApp[];
     setUnidades(initialUnits);
-    setUnidadeId((current) => (initialUnits.some((item: UnidadeApp) => item.id === current) ? current : initialUnits[0]?.id || ''));
+    preserveSelection(initialUnits);
 
     const result = await fetchSupabaseUnidades();
     if (result.unidades.length > 0) {
       const officialUnits = result.unidades as UnidadeApp[];
       setUnidades(officialUnits);
       saveLocalUnidades(officialUnits);
-      setUnidadeId((current) => (officialUnits.some((item: UnidadeApp) => item.id === current) ? current : officialUnits[0]?.id || ''));
+      preserveSelection(officialUnits);
       setMessage(`${result.unidades.length} unidade(s) atualizada(s) do Supabase (${result.tableName}).`);
     } else {
       setMessage(`Base do Supabase não carregou. Motivo: ${result.error || 'sem retorno'}. Mostrando base local/provisória.`);
@@ -223,8 +240,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   }, [unidadeQuery, unidades]);
 
   const selectedUnidade = useMemo(
-    () => unidades.find((item: UnidadeApp) => item.id === unidadeId) || filteredUnidades[0] || unidades[0],
-    [unidadeId, unidades, filteredUnidades]
+    () => findUnitByStableKey(unidades, unidadeKey) || findUnitByStableKey(filteredUnidades, unidadeKey) || filteredUnidades[0] || unidades[0],
+    [unidadeKey, unidades, filteredUnidades]
   );
 
   const addFiles = async (files: FileList | null) => {
@@ -249,7 +266,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
         }
       }
       setPhotos((current) => [...current, ...newPhotos]);
-      setMessage(`${newPhotos.length} foto(s) adicionada(s). Total nesta visita: ${photos.length + newPhotos.length}. Você pode continuar anexando mais.`);
+      setMessage(`${newPhotos.length} foto(s) adicionada(s). Você pode continuar anexando mais.`);
     } catch {
       setMessage('Não foi possível preparar uma ou mais fotos. Tente anexar novamente.');
     }
@@ -283,7 +300,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     if (!selectedUnidade) { setMessage('Selecione uma unidade escolar.'); return; }
 
     setSaving(true);
-    setMessage(`Salvando visita e iniciando envio de ${photos.length} foto(s)...`);
+    setMessage(`Salvando visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} e iniciando envio de ${photos.length} foto(s)...`);
 
     const notes = buildNotes({ tipo, representante, servicos, observacoes, conclusao, selectedUnidade });
     const localId = `local-${Date.now()}`;
@@ -344,8 +361,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
     window.dispatchEvent(new Event('ginfotos-visitas-updated'));
     setMessage(savedInServer
-      ? `✅ Visita e ${compactPhotos.length} foto(s) sincronizadas para todos os usuários.`
-      : `⚠️ Visita mantida neste aparelho como PENDENTE. Se houver muitas fotos, mantenha esta tela aberta e tente sincronizar novamente quando a conexão voltar. Motivo: ${syncError || 'servidor indisponível'}.`);
+      ? `✅ Visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} e ${compactPhotos.length} foto(s) sincronizadas para todos os usuários.`
+      : `⚠️ Visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} mantida neste aparelho como PENDENTE. Motivo: ${syncError || 'servidor indisponível'}.`);
     if (savedInServer) resetFormAfterSave();
     setSaving(false);
   };
@@ -362,8 +379,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
           <div className="field"><label htmlFor="busca-unidade">Buscar unidade escolar</label><input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designação, unidade, bairro, endereço ou diretor" /></div>
-          <div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeId} onChange={(event) => setUnidadeId(event.target.value)}>{filteredUnidades.map((item: UnidadeApp) => <option key={item.id} value={item.id}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>
-          {selectedUnidade && <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}><strong>{selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong><p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p><p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p><p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p><p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p><p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p></div>}
+          <div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeKey} onChange={(event) => { setUnidadeKey(event.target.value); setUnidadeQuery(''); }}>{filteredUnidades.map((item: UnidadeApp) => <option key={unidadeStableKey(item)} value={unidadeStableKey(item)}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>
+          {selectedUnidade && <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}><strong>UNIDADE SELECIONADA: {selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong><p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p><p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p><p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p><p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p><p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p></div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}><div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div><div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item: string) => <option key={item}>{item}</option>)}</select></div></div>
           <div className="field"><label htmlFor="representante">Representante E/6 CRE/GIN</label><input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required /></div>
           {voiceStatus && <p className="notice">{voiceStatus}</p>}
