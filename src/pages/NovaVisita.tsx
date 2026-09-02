@@ -60,7 +60,18 @@ function loadLocalVisits(): LocalVisitRecord[] {
 function saveLocalVisit(record: LocalVisitRecord) {
   const existing = loadLocalVisits();
   const filtered = existing.filter((item: LocalVisitRecord) => item.id !== record.id);
-  localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify([record, ...filtered].slice(0, 80)));
+  const next = [record, ...filtered].slice(0, 80);
+  try {
+    localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify(next));
+  } catch {
+    // Relatórios com dezenas/centenas de fotos podem ultrapassar o limite do localStorage.
+    // Nesse caso mantemos localmente só os metadados; as imagens ficam no servidor central.
+    const compact = next.map((visit) => ({
+      ...visit,
+      fotos: (visit.fotos || []).map((photo) => ({ name: photo.name, caption: photo.caption }))
+    }));
+    try { localStorage.setItem(LOCAL_VISITS_KEY, JSON.stringify(compact)); } catch { /* sem espaço local */ }
+  }
 }
 
 function todayDate() {
@@ -98,15 +109,18 @@ async function readJsonResponse(response: Response) {
   catch { throw new Error(`Servidor devolveu resposta inválida (${response.status}).`); }
 }
 
-async function saveVisitViaServer(visit: {
-  client_id: string;
-  visitor_name: string;
-  unidade_id: string;
-  visit_date: string;
-  notes: string;
-  created_by: string;
-  photos: { name: string; caption: string; dataUrl?: string }[];
-}) {
+async function saveVisitViaServer(
+  visit: {
+    client_id: string;
+    visitor_name: string;
+    unidade_id: string;
+    visit_date: string;
+    notes: string;
+    created_by: string;
+    photos: { name: string; caption: string; dataUrl?: string }[];
+  },
+  onProgress?: (sent: number, total: number) => void
+) {
   const response = await fetch('/api/visitas', {
     method: 'POST',
     credentials: 'same-origin',
@@ -127,8 +141,14 @@ async function saveVisitViaServer(visit: {
   const savedVisit = payload.visit as { id?: string } | undefined;
   if (!response.ok || !savedVisit?.id) throw new Error(String(payload.error || 'API /api/visitas não salvou a visita.'));
 
+  let sent = 0;
+  const total = visit.photos.length;
   for (const photo of visit.photos) {
-    if (!photo.dataUrl) continue;
+    if (!photo.dataUrl) {
+      sent += 1;
+      onProgress?.(sent, total);
+      continue;
+    }
     const photoResponse = await fetch(`/api/visitas?action=add-photo&id=${encodeURIComponent(savedVisit.id)}&ts=${Date.now()}`, {
       method: 'POST',
       credentials: 'same-origin',
@@ -138,6 +158,8 @@ async function saveVisitViaServer(visit: {
     });
     const photoPayload = await readJsonResponse(photoResponse);
     if (!photoResponse.ok) throw new Error(String(photoPayload.error || `Falha ao sincronizar a foto ${photo.name}.`));
+    sent += 1;
+    onProgress?.(sent, total);
   }
 
   return savedVisit.id;
@@ -207,17 +229,27 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const addFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    setMessage('Comprimindo fotos para salvar no relatório e sincronizar no app...');
+    const selectedFiles = Array.from(files);
+    setMessage(`Preparando ${selectedFiles.length} foto(s). O app não aplica limite fixo de quantidade.`);
+
     try {
-      const newPhotos = await Promise.all(Array.from(files).slice(0, 8).map(async (file: File) => ({
-        id: `${Date.now()}-${file.name}-${Math.random()}`,
-        file,
-        previewUrl: URL.createObjectURL(file),
-        dataUrl: await fileToCompressedImageDataUrl(file),
-        caption: ''
-      })));
-      setPhotos((current) => [...current, ...newPhotos].slice(0, 8));
-      setMessage(`${newPhotos.length} foto(s) pronta(s). Ao salvar a visita, cada foto será sincronizada separadamente para evitar falhas.`);
+      const newPhotos: PhotoItem[] = [];
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        const file = selectedFiles[index];
+        const prepared: PhotoItem = {
+          id: `${Date.now()}-${index}-${file.name}-${Math.random()}`,
+          file,
+          previewUrl: URL.createObjectURL(file),
+          dataUrl: await fileToCompressedImageDataUrl(file),
+          caption: ''
+        };
+        newPhotos.push(prepared);
+        if ((index + 1) % 10 === 0 || index + 1 === selectedFiles.length) {
+          setMessage(`Preparando fotos: ${index + 1} de ${selectedFiles.length} concluída(s)...`);
+        }
+      }
+      setPhotos((current) => [...current, ...newPhotos]);
+      setMessage(`${newPhotos.length} foto(s) adicionada(s). Total nesta visita: ${photos.length + newPhotos.length}. Você pode continuar anexando mais.`);
     } catch {
       setMessage('Não foi possível preparar uma ou mais fotos. Tente anexar novamente.');
     }
@@ -251,7 +283,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     if (!selectedUnidade) { setMessage('Selecione uma unidade escolar.'); return; }
 
     setSaving(true);
-    setMessage('Salvando visita no servidor e enviando fotos uma por vez...');
+    setMessage(`Salvando visita e iniciando envio de ${photos.length} foto(s)...`);
 
     const notes = buildNotes({ tipo, representante, servicos, observacoes, conclusao, selectedUnidade });
     const localId = `local-${Date.now()}`;
@@ -271,7 +303,9 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     };
 
     try {
-      const serverId = await saveVisitViaServer(visitRecord);
+      const serverId = await saveVisitViaServer(visitRecord, (sent, total) => {
+        setMessage(`Sincronizando fotos: ${sent} de ${total}. Não feche esta tela até concluir.`);
+      });
       if (serverId) {
         savedId = serverId;
         savedInServer = true;
@@ -279,6 +313,10 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     } catch (error) {
       syncError = error instanceof Error ? error.message : 'Servidor de sincronização não respondeu.';
     }
+
+    const localPhotos = savedInServer
+      ? compactPhotos.map((photo) => ({ name: photo.name, caption: photo.caption }))
+      : compactPhotos;
 
     saveLocalVisit({
       id: savedId,
@@ -299,7 +337,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       observacoes,
       conclusao,
       photo_count: compactPhotos.length,
-      fotos: compactPhotos,
+      fotos: localPhotos,
       created_by: profile?.email,
       created_at: new Date().toISOString()
     });
@@ -307,8 +345,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     window.dispatchEvent(new Event('ginfotos-visitas-updated'));
     setMessage(savedInServer
       ? `✅ Visita e ${compactPhotos.length} foto(s) sincronizadas para todos os usuários.`
-      : `⚠️ Visita mantida neste aparelho como PENDENTE. Clique em SINCRONIZAR AGORA quando a conexão voltar. Motivo: ${syncError || 'servidor indisponível'}.`);
-    resetFormAfterSave();
+      : `⚠️ Visita mantida neste aparelho como PENDENTE. Se houver muitas fotos, mantenha esta tela aberta e tente sincronizar novamente quando a conexão voltar. Motivo: ${syncError || 'servidor indisponível'}.`);
+    if (savedInServer) resetFormAfterSave();
     setSaving(false);
   };
 
@@ -319,7 +357,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       <div className="page-card">
         <p className="page-label">Nova Visita</p>
         <h1 className="page-title">Nova Visita Técnica</h1>
-        <p className="page-description">Registre a vistoria, selecione a unidade escolar, descreva os serviços verificados e anexe fotos da visita.</p>
+        <p className="page-description">Registre a vistoria, selecione a unidade escolar, descreva os serviços verificados e anexe quantas fotos forem necessárias.</p>
         <button type="button" className="empty-button" onClick={loadUnidades}>Atualizar/Sincronizar 115 unidades</button>
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
@@ -332,8 +370,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
           <div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div>
           <div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
           <div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
-          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description">As fotos são reduzidas e enviadas individualmente para melhorar a sincronização entre celular e computador.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
-          <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO E SINCRONIZANDO...' : 'SALVAR VISITA'}</button>
+          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description"><strong>Sem limite fixo de fotos no app.</strong> Você pode anexar 100 fotos ou mais. As imagens são reduzidas e enviadas uma por vez para melhorar a sincronização entre celular e computador.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
+          <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO E SINCRONIZANDO FOTOS...' : 'SALVAR VISITA'}</button>
         </form>
         {message && <p className="notice">{message}</p>}
       </div>
