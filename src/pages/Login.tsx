@@ -32,6 +32,12 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    const sessionNotice = sessionStorage.getItem('ginfotos_session_notice');
+    if (sessionNotice) {
+      setMessage(sessionNotice);
+      sessionStorage.removeItem('ginfotos_session_notice');
+    }
+
     const params = new URLSearchParams(window.location.search);
     const token = params.get('acesso');
     if (!token) return;
@@ -40,7 +46,8 @@ export default function Login() {
     fetch('/api/magic-login', {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
       body: JSON.stringify({ token })
     })
       .then(async (response) => {
@@ -69,13 +76,14 @@ export default function Login() {
     }
 
     setSubmitting(true);
-    setMessage('Validando acesso...');
+    setMessage('Validando acesso e renovando a sessão...');
 
     try {
       const response = await fetch('/api/login', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
         body: JSON.stringify({ email: trimmedEmail, password })
       });
       const data = await readLoginResponse(response);
@@ -90,12 +98,12 @@ export default function Login() {
         setCurrentUser(data.user);
         window.location.assign('/');
       } else {
-        setMessage('Resposta de login inválida. Faça o redeploy do Vercel e tente novamente.');
+        setMessage('Resposta de login inválida. Atualize o app e tente novamente.');
         setSubmitting(false);
       }
     } catch (err) {
       console.error('Login error:', err);
-      setMessage('Erro ao conectar ao servidor de login. Tente entrar pelo link de acesso direto.');
+      setMessage('Erro ao conectar ao servidor de login. Tente novamente ou use seu link de acesso direto.');
       setSubmitting(false);
     }
   };
@@ -114,10 +122,10 @@ export default function Login() {
           <label htmlFor="password">Senha</label>
           <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Digite sua senha" autoComplete="current-password" required />
 
-          <button className="primary large" type="submit" disabled={submitting}>{submitting ? 'Entrando...' : 'ENTRAR NO GINFOTOS'}</button>
+          <button className="primary large" type="submit" disabled={submitting}>{submitting ? 'RENOVANDO ACESSO...' : 'ENTRAR NO GINFOTOS'}</button>
         </form>
 
-        <p className="login-desc" style={{ marginTop: 16 }}>Usuários autorizados também podem entrar pelo link de acesso direto enviado pela administradora.</p>
+        <p className="login-desc" style={{ marginTop: 16 }}>Se você recebeu um link de acesso direto da administradora, abra novamente esse link para renovar sua sessão automaticamente.</p>
         {message && <p className="notice">{message}</p>}
       </div>
     </div>
