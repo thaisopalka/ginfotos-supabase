@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { getCurrentUser, AppUser } from './lib/session';
+import { clearCurrentUser, getCurrentUser, setCurrentUser, AppUser } from './lib/session';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { onGinfotosNotification, requestGinfotosNotificationPermission } from './lib/notifications';
 import Sidebar from './components/Sidebar';
@@ -36,6 +36,36 @@ function isIOSDevice() {
 
 function isStandaloneMode() {
   return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
+async function validateServerSession(localUser: AppUser) {
+  try {
+    const response = await fetch(`/api/login?check=${Date.now()}`, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
+    });
+
+    if (response.status === 401) {
+      clearCurrentUser();
+      sessionStorage.setItem('ginfotos_session_notice', 'Sua sessão venceu ou precisa ser renovada. Entre novamente para sincronizar visitas, fotos e relatórios.');
+      return null;
+    }
+
+    if (!response.ok) return localUser;
+
+    const payload = await response.json().catch(() => ({})) as { user?: AppUser };
+    if (payload.user?.email) {
+      setCurrentUser(payload.user);
+      return payload.user;
+    }
+
+    return localUser;
+  } catch {
+    // Se estiver sem internet, preserva o acesso local. As telas de sincronização avisam sobre a conexão.
+    return localUser;
+  }
 }
 
 function SafeMapaUnidades() {
@@ -81,9 +111,17 @@ function App() {
   const isLoginRoute = location.pathname === '/login';
 
   useEffect(() => {
-    const currentUser = getCurrentUser();
-    setUser(currentUser);
-    setLoading(false);
+    let active = true;
+
+    const initialize = async () => {
+      const currentUser = getCurrentUser();
+      const validatedUser = currentUser ? await validateServerSession(currentUser) : null;
+      if (!active) return;
+      setUser(validatedUser);
+      setLoading(false);
+    };
+
+    void initialize();
     requestGinfotosNotificationPermission();
 
     const installHandler = (event: Event) => {
@@ -100,6 +138,7 @@ function App() {
     });
 
     return () => {
+      active = false;
       window.removeEventListener('beforeinstallprompt', installHandler);
       unsubscribe();
     };
@@ -130,7 +169,7 @@ function App() {
         </div>
       )}
       <main className={isLoginRoute ? 'login-main' : 'app-main'}>
-        {loading ? <div className="page-center">Carregando aplicação…</div> : <>
+        {loading ? <div className="page-center">Verificando sessão e sincronização…</div> : <>
           <Routes>
             <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
             <Route path="/" element={<ProtectedRoute><Dashboard profile={profile} /></ProtectedRoute>} />
