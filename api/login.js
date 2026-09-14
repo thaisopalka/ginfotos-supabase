@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { setSessionCookie } from './_session.js';
+import { getSessionUser, setSessionCookie } from './_session.js';
 
 function normalizeSupabaseUrl(value) {
   const raw = String(value || '').trim();
@@ -18,7 +18,14 @@ function sessionUser(user) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+
+  if (req.method === 'GET') {
+    const user = getSessionUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Sessão expirada ou inválida.' });
+    return res.status(200).json({ ok: true, user: sessionUser(user) });
+  }
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
