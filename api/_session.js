@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 const COOKIE_NAME = 'ginfotos_session';
-const MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+const MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 function secret() {
   return String(process.env.APP_SESSION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
