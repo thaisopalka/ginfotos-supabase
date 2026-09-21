@@ -3,6 +3,14 @@ import { UserProfile } from '../App';
 import { appendDictation, startVoiceInput } from '../lib/voiceInput';
 import { fileToCompressedImageDataUrl } from '../lib/fileDataUrl';
 import { fetchSupabaseUnidades, loadLocalUnidades, mergeUnidades, saveLocalUnidades, UnidadeApp } from '../lib/unidadesSource';
+import {
+  clearVisitDraft,
+  deleteVisitDraftPhoto,
+  loadVisitDraft,
+  saveVisitDraftMeta,
+  saveVisitDraftPhoto,
+  visitDraftKey
+} from '../lib/visitDraft';
 
 interface NovaVisitaProps {
   profile: UserProfile | null;
@@ -48,6 +56,11 @@ const fallbackUnidades: UnidadeApp[] = [
 
 const visitTypes = ['VISTORIA TECNICA', 'INAUGURACAO DE GET', 'VISTORIA GET', 'OBRA', 'OUTROS'];
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
+
+function makeDraftClientId() {
+  const random = Math.random().toString(36).slice(2, 9);
+  return `local-${Date.now()}-${random}`;
+}
 
 function unidadeStableKey(item: UnidadeApp) {
   const designation = String(item.designacao || '').trim();
@@ -189,12 +202,18 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
+  const [draftStatus, setDraftStatus] = useState('Preparando rascunho automático seguro...');
+  const [draftClientId, setDraftClientId] = useState(makeDraftClientId());
   const captureInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const draftReadyRef = useRef(false);
+  const suspendDraftRef = useRef(false);
+  const draftKey = useMemo(() => visitDraftKey(profile?.email), [profile?.email]);
 
   const preserveSelection = (items: UnidadeApp[]) => {
     setUnidadeKey((current) => {
       if (findUnitByStableKey(items, current)) return current;
+      if (current && draftReadyRef.current) return current;
       return items[0] ? unidadeStableKey(items[0]) : '';
     });
   };
@@ -218,6 +237,53 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   };
 
   useEffect(() => {
+    let cancelled = false;
+
+    const restoreDraft = async () => {
+      try {
+        if (navigator.storage?.persist) void navigator.storage.persist();
+        const draft = await loadVisitDraft(draftKey);
+        if (cancelled) return;
+
+        if (draft.meta) {
+          setDraftClientId(draft.meta.clientId || makeDraftClientId());
+          setUnidadeKey(draft.meta.unidadeKey || unidadeStableKey(fallbackUnidades[0]));
+          setVisitDate(draft.meta.visitDate || todayDate());
+          setTipo(draft.meta.tipo || visitTypes[0]);
+          setRepresentante(draft.meta.representante || 'ENGA. MARCIA BRAGA');
+          setServicos(draft.meta.servicos || '');
+          setObservacoes(draft.meta.observacoes || '');
+          setConclusao(draft.meta.conclusao || '');
+        }
+
+        if (draft.photos.length > 0) {
+          const restoredPhotos: PhotoItem[] = draft.photos.map((photo) => ({
+            id: photo.id,
+            file: new File([], photo.name || 'foto.jpg', { type: photo.type || 'image/jpeg', lastModified: photo.lastModified || Date.now() }),
+            previewUrl: photo.dataUrl,
+            dataUrl: photo.dataUrl,
+            caption: photo.caption || ''
+          }));
+          setPhotos(restoredPhotos);
+        }
+
+        draftReadyRef.current = true;
+        if (draft.meta || draft.photos.length > 0) {
+          setDraftStatus(`✅ Rascunho recuperado automaticamente (${draft.photos.length} foto(s)). Nada foi apagado.`);
+        } else {
+          setDraftStatus('✅ Rascunho automático ativo. Fotos, legendas e textos serão protegidos neste aparelho.');
+        }
+      } catch (error) {
+        draftReadyRef.current = true;
+        setDraftStatus(`⚠️ Não foi possível ativar o rascunho automático: ${error instanceof Error ? error.message : 'erro do navegador'}.`);
+      }
+    };
+
+    void restoreDraft();
+    return () => { cancelled = true; };
+  }, [draftKey]);
+
+  useEffect(() => {
     loadUnidades();
     const handler = () => loadUnidades();
     window.addEventListener('ginfotos-unidades-updated', handler);
@@ -227,6 +293,31 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
       window.removeEventListener('storage', handler);
     };
   }, []);
+
+  useEffect(() => {
+    if (!draftReadyRef.current || suspendDraftRef.current) return;
+    const hasMeaningfulContent = photos.length > 0 || !!servicos.trim() || !!observacoes.trim() || !!conclusao.trim();
+    if (!hasMeaningfulContent) return;
+
+    const timer = window.setTimeout(() => {
+      saveVisitDraftMeta({
+        key: draftKey,
+        clientId: draftClientId,
+        unidadeKey,
+        visitDate,
+        tipo,
+        representante,
+        servicos,
+        observacoes,
+        conclusao,
+        updatedAt: new Date().toISOString()
+      })
+        .then(() => setDraftStatus(`✅ Rascunho salvo automaticamente às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}. Só será apagado após sincronização completa.`))
+        .catch((error) => setDraftStatus(`⚠️ Falha ao salvar rascunho: ${error instanceof Error ? error.message : 'erro do navegador'}.`));
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [draftKey, draftClientId, unidadeKey, visitDate, tipo, representante, servicos, observacoes, conclusao, photos.length]);
 
   const filteredUnidades = useMemo(() => {
     const term = unidadeQuery.trim().toLowerCase();
@@ -261,32 +352,66 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
           caption: ''
         };
         newPhotos.push(prepared);
+
+        await saveVisitDraftPhoto({
+          id: prepared.id,
+          draftKey,
+          name: file.name,
+          type: file.type || 'image/jpeg',
+          lastModified: file.lastModified || Date.now(),
+          dataUrl: prepared.dataUrl,
+          caption: prepared.caption
+        });
+
         if ((index + 1) % 10 === 0 || index + 1 === selectedFiles.length) {
-          setMessage(`Preparando fotos: ${index + 1} de ${selectedFiles.length} concluída(s)...`);
+          setMessage(`Preparando e protegendo fotos: ${index + 1} de ${selectedFiles.length} concluída(s)...`);
         }
       }
       setPhotos((current) => [...current, ...newPhotos]);
-      setMessage(`${newPhotos.length} foto(s) adicionada(s). Você pode continuar anexando mais.`);
-    } catch {
-      setMessage('Não foi possível preparar uma ou mais fotos. Tente anexar novamente.');
+      setDraftStatus(`✅ ${newPhotos.length} nova(s) foto(s) gravada(s) no rascunho seguro deste aparelho.`);
+      setMessage(`${newPhotos.length} foto(s) adicionada(s) e protegida(s). Você pode continuar anexando mais.`);
+    } catch (error) {
+      setMessage(`Não foi possível preparar/salvar uma ou mais fotos no rascunho. ${error instanceof Error ? error.message : ''}`);
     }
   };
 
-  const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => { addFiles(event.target.files); event.target.value = ''; };
-  const updateCaption = (id: string, caption: string) => setPhotos((current) => current.map((photo: PhotoItem) => (photo.id === id ? { ...photo, caption } : photo)));
+  const handleCaptureChange = (event: ChangeEvent<HTMLInputElement>) => { void addFiles(event.target.files); event.target.value = ''; };
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => { void addFiles(event.target.files); event.target.value = ''; };
+
+  const updateCaption = (id: string, caption: string) => {
+    setPhotos((current) => current.map((photo: PhotoItem) => {
+      if (photo.id !== id) return photo;
+      const updated = { ...photo, caption };
+      void saveVisitDraftPhoto({
+        id: updated.id,
+        draftKey,
+        name: updated.file.name,
+        type: updated.file.type || 'image/jpeg',
+        lastModified: updated.file.lastModified || Date.now(),
+        dataUrl: updated.dataUrl,
+        caption: updated.caption
+      }).then(() => setDraftStatus('✅ Legenda salva automaticamente no rascunho seguro.'))
+        .catch(() => setDraftStatus('⚠️ Não foi possível salvar esta legenda no rascunho.'));
+      return updated;
+    }));
+  };
+
   const dictateCaption = (id: string) => {
     const current = photos.find((photo: PhotoItem) => photo.id === id)?.caption || '';
     startVoiceInput((text) => updateCaption(id, appendDictation(current, text)), setVoiceStatus);
   };
+
   const removePhoto = (id: string) => setPhotos((current) => {
     const photo = current.find((item: PhotoItem) => item.id === id);
-    if (photo) URL.revokeObjectURL(photo.previewUrl);
+    if (photo?.previewUrl.startsWith('blob:')) URL.revokeObjectURL(photo.previewUrl);
+    void deleteVisitDraftPhoto(id);
     return current.filter((item: PhotoItem) => item.id !== id);
   });
 
   const resetFormAfterSave = () => {
-    photos.forEach((photo: PhotoItem) => URL.revokeObjectURL(photo.previewUrl));
+    photos.forEach((photo: PhotoItem) => {
+      if (photo.previewUrl.startsWith('blob:')) URL.revokeObjectURL(photo.previewUrl);
+    });
     setPhotos([]);
     setServicos('');
     setObservacoes('');
@@ -303,7 +428,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     setMessage(`Salvando visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} e iniciando envio de ${photos.length} foto(s)...`);
 
     const notes = buildNotes({ tipo, representante, servicos, observacoes, conclusao, selectedUnidade });
-    const localId = `local-${Date.now()}`;
+    const localId = draftClientId;
     let savedId = localId;
     let savedInServer = false;
     let syncError = '';
@@ -360,10 +485,24 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
     });
 
     window.dispatchEvent(new Event('ginfotos-visitas-updated'));
-    setMessage(savedInServer
-      ? `✅ Visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} e ${compactPhotos.length} foto(s) sincronizadas para todos os usuários.`
-      : `⚠️ Visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} mantida neste aparelho como PENDENTE. Motivo: ${syncError || 'servidor indisponível'}.`);
-    if (savedInServer) resetFormAfterSave();
+
+    if (savedInServer) {
+      suspendDraftRef.current = true;
+      try {
+        await clearVisitDraft(draftKey);
+      } catch {
+        // A visita já foi sincronizada; falha ao limpar o rascunho não deve invalidar o salvamento.
+      }
+      resetFormAfterSave();
+      setDraftClientId(makeDraftClientId());
+      setDraftStatus('✅ Visita sincronizada. O rascunho anterior foi limpo somente após a confirmação do servidor.');
+      window.setTimeout(() => { suspendDraftRef.current = false; }, 1000);
+      setMessage(`✅ Visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} e ${compactPhotos.length} foto(s) sincronizadas para todos os usuários.`);
+    } else {
+      setDraftStatus(`🛟 RASCUNHO PRESERVADO. ${compactPhotos.length} foto(s), legendas e textos continuam guardados neste aparelho.`);
+      setMessage(`⚠️ Visita de ${selectedUnidade.designacao || ''} - ${selectedUnidade.name} mantida neste aparelho como PENDENTE. Motivo: ${syncError || 'servidor indisponível'}. O rascunho NÃO foi apagado.`);
+    }
+
     setSaving(false);
   };
 
@@ -375,6 +514,10 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
         <p className="page-label">Nova Visita</p>
         <h1 className="page-title">Nova Visita Técnica</h1>
         <p className="page-description">Registre a vistoria, selecione a unidade escolar, descreva os serviços verificados e anexe quantas fotos forem necessárias.</p>
+        <div className="notice" style={{ marginTop: 14, border: '2px solid #16a34a', background: '#f0fdf4', color: '#14532d', fontWeight: 800 }}>
+          🛟 RASCUNHO AUTOMÁTICO SEGURO<br />
+          <span style={{ fontWeight: 600 }}>{draftStatus}</span>
+        </div>
         <button type="button" className="empty-button" onClick={loadUnidades}>Atualizar/Sincronizar 115 unidades</button>
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
@@ -387,7 +530,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
           <div className="field"><label htmlFor="servicos">Serviços Verificados</label>{voiceButton(() => startVoiceInput((text) => setServicos((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="servicos" value={servicos} onChange={(event) => setServicos(event.target.value)} rows={4} placeholder="Descreva os problemas, serviços e necessidades verificadas." /></div>
           <div className="field"><label htmlFor="observacoes">Observações</label>{voiceButton(() => startVoiceInput((text) => setObservacoes((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="observacoes" value={observacoes} onChange={(event) => setObservacoes(event.target.value)} rows={3} /></div>
           <div className="field"><label htmlFor="conclusao">Conclusão</label>{voiceButton(() => startVoiceInput((text) => setConclusao((current) => appendDictation(current, text)), setVoiceStatus))}<textarea id="conclusao" value={conclusao} onChange={(event) => setConclusao(event.target.value)} rows={3} /></div>
-          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description"><strong>Sem limite fixo de fotos no app.</strong> Você pode anexar 100 fotos ou mais. As imagens são reduzidas e enviadas uma por vez para melhorar a sincronização entre celular e computador.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
+          <div className="page-card" style={{ boxShadow: 'none', padding: 18 }}><h2 style={{ marginTop: 0 }}>Fotos da visita</h2><p className="page-description"><strong>Sem limite fixo de fotos no app.</strong> Você pode anexar 100 fotos ou mais. Cada foto e legenda também fica gravada automaticamente no rascunho seguro deste aparelho antes da sincronização.</p><div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}><button className="primary" type="button" onClick={() => captureInputRef.current?.click()}>TIRAR FOTO AGORA</button><button className="primary" type="button" onClick={() => fileInputRef.current?.click()}>ANEXAR FOTOS</button><span className="status-pill">{photos.length} foto(s)</span></div><input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleCaptureChange} /><input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFileChange} />{photos.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 18 }}>{photos.map((photo: PhotoItem) => <div key={photo.id} className="page-card" style={{ boxShadow: 'none', padding: 12 }}><img src={photo.previewUrl} alt="Foto da visita" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12 }} /><label style={{ marginTop: 10 }} htmlFor={`caption-${photo.id}`}>Legenda</label><button type="button" className="voice-button" onClick={() => dictateCaption(photo.id)}>🎤 FALAR LEGENDA</button><textarea id={`caption-${photo.id}`} value={photo.caption} onChange={(event) => updateCaption(photo.id, event.target.value)} rows={2} placeholder="Digite ou dite a legenda da foto." /><button type="button" className="empty-button" style={{ marginTop: 10, background: '#ef4444' }} onClick={() => removePhoto(photo.id)}>Excluir foto</button></div>)}</div>}</div>
           <button className="primary large" type="submit" disabled={saving}>{saving ? 'SALVANDO E SINCRONIZANDO FOTOS...' : 'SALVAR VISITA'}</button>
         </form>
         {message && <p className="notice">{message}</p>}
