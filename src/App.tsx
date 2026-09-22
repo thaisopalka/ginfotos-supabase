@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { clearCurrentUser, getCurrentUser, setCurrentUser, AppUser } from './lib/session';
+import { syncPendingVisitsOnce } from './lib/visitSync';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { onGinfotosNotification, requestGinfotosNotificationPermission } from './lib/notifications';
 import Sidebar from './components/Sidebar';
@@ -30,12 +31,39 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 };
 
+const MAGIC_ACCESS_KEY = 'ginfotos_magic_access';
+
 function isIOSDevice() {
   return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
 }
 
 function isStandaloneMode() {
   return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
+async function renewWithStoredMagicAccess(): Promise<AppUser | null> {
+  let token = '';
+  try { token = localStorage.getItem(MAGIC_ACCESS_KEY) || ''; } catch { /* ignore */ }
+  if (!token) return null;
+
+  try {
+    const response = await fetch('/api/magic-login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      body: JSON.stringify({ token })
+    });
+    const payload = await response.json().catch(() => ({})) as { ok?: boolean; user?: AppUser };
+    if (!response.ok || !payload.ok || !payload.user?.email) {
+      try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
+      return null;
+    }
+    setCurrentUser(payload.user);
+    return payload.user;
+  } catch {
+    return null;
+  }
 }
 
 async function validateServerSession(localUser: AppUser) {
@@ -48,8 +76,10 @@ async function validateServerSession(localUser: AppUser) {
     });
 
     if (response.status === 401) {
+      const renewed = await renewWithStoredMagicAccess();
+      if (renewed) return renewed;
       clearCurrentUser();
-      sessionStorage.setItem('ginfotos_session_notice', 'Sua sessão venceu ou precisa ser renovada. Entre novamente para sincronizar visitas, fotos e relatórios.');
+      sessionStorage.setItem('ginfotos_session_notice', 'Sua sessão precisa ser renovada. Entre novamente para sincronizar visitas, fotos e relatórios.');
       return null;
     }
 
@@ -63,7 +93,6 @@ async function validateServerSession(localUser: AppUser) {
 
     return localUser;
   } catch {
-    // Se estiver sem internet, preserva o acesso local. As telas de sincronização avisam sobre a conexão.
     return localUser;
   }
 }
@@ -143,6 +172,41 @@ function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!user?.email) return;
+    let stopped = false;
+    let running = false;
+
+    const syncNow = async () => {
+      if (stopped || running || !navigator.onLine) return;
+      running = true;
+      try {
+        await syncPendingVisitsOnce();
+        if (!stopped) window.dispatchEvent(new Event('ginfotos-visitas-updated'));
+      } finally {
+        running = false;
+      }
+    };
+
+    const onOnline = () => { void syncNow(); };
+    const onFocus = () => { void syncNow(); };
+    const onVisible = () => { if (document.visibilityState === 'visible') void syncNow(); };
+    const intervalId = window.setInterval(() => { void syncNow(); }, 20000);
+
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    void syncNow();
+
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [user?.email]);
 
   const handleInstall = async () => {
     if (installPrompt) {
