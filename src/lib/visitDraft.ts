@@ -25,9 +25,35 @@ const DB_NAME = 'ginfotos_visit_drafts';
 const DB_VERSION = 1;
 const META_STORE = 'drafts';
 const PHOTO_STORE = 'photos';
+const META_MIRROR_PREFIX = 'ginfotos_draft_meta:';
+
+function mirrorKey(key: string) {
+  return `${META_MIRROR_PREFIX}${key}`;
+}
+
+function readMetaMirror(key: string): VisitDraftMeta | null {
+  try {
+    const raw = localStorage.getItem(mirrorKey(key));
+    return raw ? JSON.parse(raw) as VisitDraftMeta : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMetaMirror(meta: VisitDraftMeta) {
+  try { localStorage.setItem(mirrorKey(meta.key), JSON.stringify(meta)); } catch { /* backup auxiliar */ }
+}
+
+function removeMetaMirror(key: string) {
+  try { localStorage.removeItem(mirrorKey(key)); } catch { /* ignore */ }
+}
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB não está disponível neste navegador.'));
+      return;
+    }
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => reject(request.error || new Error('Falha ao abrir o banco de rascunhos.'));
     request.onupgradeneeded = () => {
@@ -57,6 +83,9 @@ export function visitDraftKey(email?: string | null) {
 }
 
 export async function saveVisitDraftMeta(meta: VisitDraftMeta) {
+  // Espelho síncrono: protege textos e seleção mesmo se a página fechar antes da transação IndexedDB terminar.
+  writeMetaMirror(meta);
+
   const db = await openDb();
   const tx = db.transaction(META_STORE, 'readwrite');
   tx.objectStore(META_STORE).put(meta);
@@ -91,25 +120,40 @@ async function readPhotosForDraft(db: IDBDatabase, draftKey: string): Promise<Vi
 }
 
 export async function loadVisitDraft(key: string): Promise<{ meta: VisitDraftMeta | null; photos: VisitDraftPhoto[] }> {
-  const db = await openDb();
-  const meta = await new Promise<VisitDraftMeta | null>((resolve, reject) => {
-    const tx = db.transaction(META_STORE, 'readonly');
-    const request = tx.objectStore(META_STORE).get(key);
-    request.onsuccess = () => resolve((request.result || null) as VisitDraftMeta | null);
-    request.onerror = () => reject(request.error || new Error('Falha ao recuperar rascunho.'));
-  });
-  const photos = await readPhotosForDraft(db, key);
-  db.close();
-  return { meta, photos };
+  const mirror = readMetaMirror(key);
+  try {
+    const db = await openDb();
+    const meta = await new Promise<VisitDraftMeta | null>((resolve, reject) => {
+      const tx = db.transaction(META_STORE, 'readonly');
+      const request = tx.objectStore(META_STORE).get(key);
+      request.onsuccess = () => resolve((request.result || null) as VisitDraftMeta | null);
+      request.onerror = () => reject(request.error || new Error('Falha ao recuperar rascunho.'));
+    });
+    const photos = await readPhotosForDraft(db, key);
+    db.close();
+
+    const bestMeta = meta && mirror
+      ? (String(meta.updatedAt || '') >= String(mirror.updatedAt || '') ? meta : mirror)
+      : (meta || mirror);
+    return { meta: bestMeta, photos };
+  } catch {
+    // Mesmo se IndexedDB falhar, ainda recuperamos textos/seleção do espelho local.
+    return { meta: mirror, photos: [] };
+  }
 }
 
 export async function clearVisitDraft(key: string) {
-  const db = await openDb();
-  const photos = await readPhotosForDraft(db, key);
-  const tx = db.transaction([META_STORE, PHOTO_STORE], 'readwrite');
-  tx.objectStore(META_STORE).delete(key);
-  const photoStore = tx.objectStore(PHOTO_STORE);
-  photos.forEach((photo) => photoStore.delete(photo.id));
-  await complete(tx);
-  db.close();
+  removeMetaMirror(key);
+  try {
+    const db = await openDb();
+    const photos = await readPhotosForDraft(db, key);
+    const tx = db.transaction([META_STORE, PHOTO_STORE], 'readwrite');
+    tx.objectStore(META_STORE).delete(key);
+    const photoStore = tx.objectStore(PHOTO_STORE);
+    photos.forEach((photo) => photoStore.delete(photo.id));
+    await complete(tx);
+    db.close();
+  } catch {
+    // O espelho já foi limpo. Uma falha de IndexedDB não deve invalidar visita já sincronizada.
+  }
 }
