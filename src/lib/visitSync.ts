@@ -1,3 +1,5 @@
+import { clearVisitDraft, loadVisitDraft, visitDraftKey } from './visitDraft';
+
 export interface PendingVisitPhoto {
   name: string;
   caption?: string;
@@ -101,6 +103,29 @@ async function uploadPhoto(remoteId: string, photo: PendingVisitPhoto, index: nu
   if (!response.ok) throw new Error(String(payload.error || `Falha ao enviar ${photo.name}.`));
 }
 
+async function recoverPhotosFromSecureDraft(visit: PendingVisitRecord) {
+  const localPhotos = visit.fotos || [];
+  if (!visit.created_by) return { photos: localPhotos, draftKey: '', draftMatches: false };
+
+  const key = visitDraftKey(visit.created_by);
+  try {
+    const draft = await loadVisitDraft(key);
+    if (!draft.meta || draft.meta.clientId !== visit.id || draft.photos.length === 0) {
+      return { photos: localPhotos, draftKey: key, draftMatches: false };
+    }
+    const draftPhotos: PendingVisitPhoto[] = draft.photos.map((photo) => ({
+      name: photo.name,
+      caption: photo.caption || '',
+      dataUrl: photo.dataUrl
+    }));
+    const localWithData = localPhotos.filter((photo) => !!photo.dataUrl);
+    const photos = draftPhotos.length >= localWithData.length ? draftPhotos : localWithData;
+    return { photos, draftKey: key, draftMatches: true };
+  } catch {
+    return { photos: localPhotos, draftKey: key, draftMatches: false };
+  }
+}
+
 export async function syncPendingVisitsOnce() {
   if (!navigator.onLine) return { synced: 0, pending: loadPendingVisitRecords().filter((item) => item.id.startsWith('local-')).length };
 
@@ -116,20 +141,24 @@ export async function syncPendingVisitsOnce() {
     }
 
     try {
+      const recovered = await recoverPhotosFromSecureDraft(visit);
       const remoteId = await createOrFindRemoteVisit(visit);
-      const photos = visit.fotos || [];
-      for (let index = 0; index < photos.length; index += 1) {
-        await uploadPhoto(remoteId, photos[index], index);
+      for (let index = 0; index < recovered.photos.length; index += 1) {
+        await uploadPhoto(remoteId, recovered.photos[index], index);
       }
 
       next.push({
         ...visit,
         id: remoteId,
-        fotos: photos.map((photo) => ({ name: photo.name, caption: photo.caption || '' })),
-        photo_count: Math.max(visit.photo_count || 0, photos.length)
+        fotos: recovered.photos.map((photo) => ({ name: photo.name, caption: photo.caption || '' })),
+        photo_count: Math.max(visit.photo_count || 0, recovered.photos.length)
       });
       synced += 1;
       changed = true;
+
+      if (recovered.draftMatches && recovered.draftKey) {
+        try { await clearVisitDraft(recovered.draftKey); } catch { /* visita já está segura no servidor */ }
+      }
     } catch {
       next.push(visit);
     }
