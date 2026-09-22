@@ -84,5 +84,9 @@ export function requireSession(req, res) {
     res.status(401).json({ error: 'Sessão expirada ou inválida. Entre novamente no GINFOTOS.' });
     return null;
   }
+
+  // Sessão deslizante: qualquer uso válido do app renova mais 30 dias.
+  // Isso evita que um celular de campo perca a sessão no meio de uma vistoria.
+  try { setSessionCookie(res, user); } catch { /* a validação acima continua valendo */ }
   return user;
 }
