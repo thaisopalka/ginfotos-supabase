@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ginfotos-6cre-v5-sync-repair';
+const CACHE_NAME = 'ginfotos-6cre-v6-autosync';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/logo%20ginfotos.png'];
 
 self.addEventListener('install', (event) => {
@@ -24,7 +24,7 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(request, { cache: 'no-store' }).catch(() => new Response(
-        JSON.stringify({ error: 'Sem conexão com o servidor. Tente SINCRONIZAR AGORA novamente.' }),
+        JSON.stringify({ error: 'Sem conexão com o servidor. O GINFOTOS tentará sincronizar novamente automaticamente.' }),
         { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
       ))
     );
