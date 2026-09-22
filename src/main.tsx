@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import VisitSyncManager from './components/VisitSyncManager';
 import './index.css';
 import './layout-fixes.css';
 import './mobile-pwa.css';
@@ -31,6 +32,7 @@ if ('serviceWorker' in navigator) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
+      <VisitSyncManager />
       <App />
     </BrowserRouter>
   </React.StrictMode>
