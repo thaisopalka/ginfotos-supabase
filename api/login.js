@@ -24,7 +24,9 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const user = getSessionUser(req);
     if (!user) return res.status(401).json({ ok: false, error: 'Sessão expirada ou inválida.' });
-    return res.status(200).json({ ok: true, user: sessionUser(user) });
+    const safeUser = sessionUser(user);
+    setSessionCookie(res, safeUser);
+    return res.status(200).json({ ok: true, user: safeUser });
   }
 
   if (req.method !== 'POST') {
