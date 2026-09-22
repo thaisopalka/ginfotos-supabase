@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ginfotos-6cre-v6-autosync';
+const CACHE_NAME = 'ginfotos-6cre-v7-sync-stable';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/logo%20ginfotos.png'];
 
 self.addEventListener('install', (event) => {
