@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { setCurrentUser } from '../lib/session';
 
 const ADMIN_EMAIL = 'thaisopalka@gmail.com';
+const MAGIC_ACCESS_KEY = 'ginfotos_magic_access';
 
 type LoginResponse = {
   ok?: boolean;
@@ -42,6 +43,7 @@ export default function Login() {
     const token = params.get('acesso');
     if (!token) return;
 
+    try { localStorage.setItem(MAGIC_ACCESS_KEY, token); } catch { /* ignore */ }
     setMessage('Validando link de acesso...');
     fetch('/api/magic-login', {
       method: 'POST',
@@ -57,6 +59,7 @@ export default function Login() {
         window.location.assign('/');
       })
       .catch((error) => {
+        try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
         setMessage(error instanceof Error ? error.message : 'Não foi possível entrar pelo link de acesso.');
         window.history.replaceState({}, document.title, '/login');
       });
@@ -95,6 +98,7 @@ export default function Login() {
       }
 
       if (data.ok && data.user) {
+        try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
         setCurrentUser(data.user);
         window.location.assign('/');
       } else {
