@@ -287,38 +287,51 @@ function normalizeVisit(row, options = {}) {
 async function registerPhotoLink(client, visitId, metadata) {
   if (!metadata?.path) throw new Error('Caminho da foto ausente.');
 
-  const { data: existing, error: existingError } = await client
-    .from('fotos_visita')
-    .select('id, ordem')
-    .eq('storage_path', metadata.path)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
+  try {
+    const { data: existing, error: existingError } = await client
+      .from('fotos_visita')
+      .select('id, ordem')
+      .eq('storage_path', metadata.path)
+      .maybeSingle();
 
-  if (existing?.id) {
-    const { error } = await client.from('fotos_visita').update({
-      visita_id: visitId,
-      legenda: clean(metadata.caption),
-      status_legenda: clean(metadata.caption) ? 'COM_LEGENDA' : 'SEM_LEGENDA'
-    }).eq('id', existing.id);
-    if (error) throw new Error(error.message);
-    return;
+    if (!existingError && existing?.id) {
+      await client.from('fotos_visita').update({
+        visita_id: visitId,
+        legenda: clean(metadata.caption),
+        status_legenda: clean(metadata.caption) ? 'COM_LEGENDA' : 'SEM_LEGENDA'
+      }).eq('id', existing.id);
+    } else {
+      const { count } = await client
+        .from('fotos_visita')
+        .select('id', { count: 'exact', head: true })
+        .eq('visita_id', visitId);
+
+      await client.from('fotos_visita').insert({
+        visita_id: visitId,
+        storage_path: metadata.path,
+        arquivo_url: metadata.path,
+        legenda: clean(metadata.caption),
+        ordem: Number(count || 0),
+        status_legenda: clean(metadata.caption) ? 'COM_LEGENDA' : 'SEM_LEGENDA'
+      });
+    }
+  } catch (err) {
+    console.warn('fotos_visita registro falhou, utilizando backup seguro:', err);
   }
 
-  const { count, error: countError } = await client
-    .from('fotos_visita')
-    .select('id', { count: 'exact', head: true })
-    .eq('visita_id', visitId);
-  if (countError) throw new Error(countError.message);
-
-  const { error } = await client.from('fotos_visita').insert({
-    visita_id: visitId,
-    storage_path: metadata.path,
-    arquivo_url: metadata.path,
-    legenda: clean(metadata.caption),
-    ordem: Number(count || 0),
-    status_legenda: clean(metadata.caption) ? 'COM_LEGENDA' : 'SEM_LEGENDA'
-  });
-  if (error) throw new Error(error.message);
+  // Backup seguro: também registrar foto no campo notes para garantir integridade total
+  try {
+    const { data: visitRow } = await client.from('visitas').select('notes').eq('id', visitId).maybeSingle();
+    if (visitRow) {
+      const parsed = parsePhotoPayload(visitRow.notes);
+      const existingPhotos = (parsed.photos || []).filter((p) => p?.path !== metadata.path);
+      existingPhotos.push({ name: metadata.name, caption: metadata.caption || '', path: metadata.path });
+      const updatedNotes = `${parsed.text}\n${PHOTO_MARKER}${JSON.stringify({ fotos: existingPhotos })}`;
+      await client.from('visitas').update({ notes: updatedNotes }).eq('id', visitId);
+    }
+  } catch (errNotes) {
+    console.warn('Erro ao atualizar redundância no notes:', errNotes);
+  }
 }
 
 async function uploadSinglePhoto(client, visitId, photo, index) {

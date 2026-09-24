@@ -45,6 +45,6 @@ export default async function handler(req, res) {
   }
 
   const user = safeUser(data);
-  setSessionCookie(res, user);
-  return res.status(200).json({ ok: true, user });
+  const tokenGenerated = setSessionCookie(res, user);
+  return res.status(200).json({ ok: true, user, token: tokenGenerated });
 }

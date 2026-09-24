@@ -25,8 +25,8 @@ export default async function handler(req, res) {
     const user = getSessionUser(req);
     if (!user) return res.status(401).json({ ok: false, error: 'Sessão expirada ou inválida.' });
     const safeUser = sessionUser(user);
-    setSessionCookie(res, safeUser);
-    return res.status(200).json({ ok: true, user: safeUser });
+    const token = setSessionCookie(res, safeUser);
+    return res.status(200).json({ ok: true, user: safeUser, token });
   }
 
   if (req.method !== 'POST') {
@@ -47,8 +47,8 @@ export default async function handler(req, res) {
 
   if (adminEmail && adminPassword && email === adminEmail && password === adminPassword) {
     const user = sessionUser({ email: adminEmail, name: 'Thaís Opalka', role: 'admin' });
-    setSessionCookie(res, user);
-    return res.status(200).json({ ok: true, user });
+    const token = setSessionCookie(res, user);
+    return res.status(200).json({ ok: true, user, token });
   }
 
   if (!supabaseUrl || !supabaseServiceKey) {
@@ -75,8 +75,8 @@ export default async function handler(req, res) {
     }
 
     const safeUser = sessionUser(user);
-    setSessionCookie(res, safeUser);
-    return res.status(200).json({ ok: true, user: safeUser });
+    const token = setSessionCookie(res, safeUser);
+    return res.status(200).json({ ok: true, user: safeUser, token });
   } catch (err) {
     console.error('Login error:', err);
     return res.status(500).json({ error: 'Internal server error' });
