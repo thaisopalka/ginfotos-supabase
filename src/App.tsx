@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { clearCurrentUser, getCurrentUser, setCurrentUser, AppUser } from './lib/session';
+import { apiFetch, setStoredToken, clearStoredToken } from './lib/apiClient';
 import { syncPendingVisitsOnce } from './lib/visitSync';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { onGinfotosNotification, requestGinfotosNotificationPermission } from './lib/notifications';
@@ -47,18 +48,17 @@ async function renewWithStoredMagicAccess(): Promise<AppUser | null> {
   if (!token) return null;
 
   try {
-    const response = await fetch('/api/magic-login', {
+    const response = await apiFetch('/api/magic-login', {
       method: 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token })
     });
-    const payload = await response.json().catch(() => ({})) as { ok?: boolean; user?: AppUser };
+    const payload = await response.json().catch(() => ({})) as { ok?: boolean; user?: AppUser; token?: string };
     if (!response.ok || !payload.ok || !payload.user?.email) {
       try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
       return null;
     }
+    if (payload.token) setStoredToken(payload.token);
     setCurrentUser(payload.user);
     return payload.user;
   } catch {
@@ -68,25 +68,24 @@ async function renewWithStoredMagicAccess(): Promise<AppUser | null> {
 
 async function validateServerSession(localUser: AppUser) {
   try {
-    const response = await fetch(`/api/login?check=${Date.now()}`, {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
+    const response = await apiFetch(`/api/login?check=${Date.now()}`, {
+      method: 'GET'
     });
 
     if (response.status === 401) {
       const renewed = await renewWithStoredMagicAccess();
       if (renewed) return renewed;
       clearCurrentUser();
+      clearStoredToken();
       sessionStorage.setItem('ginfotos_session_notice', 'Sua sessão precisa ser renovada. Entre novamente para sincronizar visitas, fotos e relatórios.');
       return null;
     }
 
     if (!response.ok) return localUser;
 
-    const payload = await response.json().catch(() => ({})) as { user?: AppUser };
+    const payload = await response.json().catch(() => ({})) as { user?: AppUser; token?: string };
     if (payload.user?.email) {
+      if (payload.token) setStoredToken(payload.token);
       setCurrentUser(payload.user);
       return payload.user;
     }
