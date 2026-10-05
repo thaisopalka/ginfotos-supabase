@@ -40,11 +40,18 @@ export default function Login() {
     }
 
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('acesso');
+    const queryToken = params.get('acesso')?.trim() || '';
+    let storedToken = '';
+    try { storedToken = localStorage.getItem(MAGIC_ACCESS_KEY)?.trim() || ''; } catch { /* ignore */ }
+    const token = queryToken || storedToken;
     if (!token) return;
 
-    try { localStorage.setItem(MAGIC_ACCESS_KEY, token); } catch { /* ignore */ }
-    setMessage('Validando link de acesso...');
+    if (queryToken) {
+      try { localStorage.setItem(MAGIC_ACCESS_KEY, queryToken); } catch { /* ignore */ }
+    }
+
+    setSubmitting(true);
+    setMessage(queryToken ? 'Validando link de acesso...' : 'Renovando seu acesso automaticamente...');
     fetch('/api/magic-login', {
       method: 'POST',
       credentials: 'same-origin',
@@ -56,12 +63,14 @@ export default function Login() {
         const data = await readLoginResponse(response);
         if (!response.ok || !data.ok || !data.user) throw new Error(data.error || 'Link inválido.');
         setCurrentUser(data.user);
+        if (queryToken) window.history.replaceState({}, document.title, '/login');
         window.location.assign('/');
       })
       .catch((error) => {
         try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
-        setMessage(error instanceof Error ? error.message : 'Não foi possível entrar pelo link de acesso.');
-        window.history.replaceState({}, document.title, '/login');
+        setMessage(error instanceof Error ? error.message : 'Não foi possível renovar o acesso pelo link. Abra novamente o link enviado pela administradora.');
+        setSubmitting(false);
+        if (queryToken) window.history.replaceState({}, document.title, '/login');
       });
   }, []);
 
