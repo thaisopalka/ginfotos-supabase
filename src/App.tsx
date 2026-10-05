@@ -14,6 +14,7 @@ import NovaVisita from './pages/NovaVisita';
 import Visitas from './pages/Visitas';
 import Pastas from './pages/Pastas';
 import Admin from './pages/Admin';
+import GerarAcesso from './pages/GerarAcesso';
 import Relatorios from './pages/Relatorios';
 import WhatsappDiretores from './pages/WhatsappDiretores';
 import Perfil from './pages/Perfil';
@@ -245,6 +246,7 @@ function App() {
             <Route path="/whatsapp-diretores" element={<ProtectedRoute><WhatsappDiretores /></ProtectedRoute>} />
             <Route path="/perfil" element={<ProtectedRoute><Perfil user={user} onUserChange={setUser} /></ProtectedRoute>} />
             <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
+            <Route path="/gerar-acesso" element={<ProtectedRoute adminOnly><GerarAcesso /></ProtectedRoute>} />
             <Route path="/not-found" element={<NotFound />} />
             <Route path="*" element={<Navigate to={location.pathname === '/login' ? '/login' : '/not-found'} replace />} />
           </Routes>
