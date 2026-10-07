@@ -114,7 +114,7 @@ export default async function handler(req, res) {
     const origin = `https://${req.headers.host}`;
     return res.status(200).json({
       ok: true,
-      link: `${origin}/login?acesso=${encodeURIComponent(token)}`,
+      link: `${origin}/api/magic-login?acesso=${encodeURIComponent(token)}`,
       email,
       name,
       role,
