@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { setCurrentUser } from '../lib/session';
+import { setStoredToken } from '../lib/apiClient';
 
 const ADMIN_EMAIL = 'thaisopalka@gmail.com';
 const MAGIC_ACCESS_KEY = 'ginfotos_magic_access';
@@ -7,6 +8,7 @@ const MAGIC_ACCESS_KEY = 'ginfotos_magic_access';
 type LoginResponse = {
   ok?: boolean;
   error?: string;
+  token?: string;
   user?: Parameters<typeof setCurrentUser>[0];
 };
 
@@ -31,6 +33,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [magicMode, setMagicMode] = useState(false);
 
   useEffect(() => {
     const sessionNotice = sessionStorage.getItem('ginfotos_session_notice');
@@ -41,17 +44,20 @@ export default function Login() {
 
     const params = new URLSearchParams(window.location.search);
     const queryToken = params.get('acesso')?.trim() || '';
-    let storedToken = '';
-    try { storedToken = localStorage.getItem(MAGIC_ACCESS_KEY)?.trim() || ''; } catch { /* ignore */ }
-    const token = queryToken || storedToken;
+    let storedMagicToken = '';
+    try { storedMagicToken = localStorage.getItem(MAGIC_ACCESS_KEY)?.trim() || ''; } catch { /* ignore */ }
+    const token = queryToken || storedMagicToken;
     if (!token) return;
+
+    setMagicMode(true);
 
     if (queryToken) {
       try { localStorage.setItem(MAGIC_ACCESS_KEY, queryToken); } catch { /* ignore */ }
     }
 
     setSubmitting(true);
-    setMessage(queryToken ? 'Validando link de acesso...' : 'Renovando seu acesso automaticamente...');
+    setMessage(queryToken ? 'Entrando automaticamente pelo seu link mágico...' : 'Renovando seu acesso automaticamente...');
+
     fetch('/api/magic-login', {
       method: 'POST',
       credentials: 'same-origin',
@@ -61,15 +67,17 @@ export default function Login() {
     })
       .then(async (response) => {
         const data = await readLoginResponse(response);
-        if (!response.ok || !data.ok || !data.user) throw new Error(data.error || 'Link inválido.');
+        if (!response.ok || !data.ok || !data.user) throw new Error(data.error || 'Link mágico inválido.');
+        if (data.token) setStoredToken(data.token);
         setCurrentUser(data.user);
         if (queryToken) window.history.replaceState({}, document.title, '/login');
-        window.location.assign('/');
+        window.location.replace('/');
       })
       .catch((error) => {
         try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
-        setMessage(error instanceof Error ? error.message : 'Não foi possível renovar o acesso pelo link. Abra novamente o link enviado pela administradora.');
+        setMessage(error instanceof Error ? error.message : 'Não foi possível entrar pelo link mágico.');
         setSubmitting(false);
+        setMagicMode(false);
         if (queryToken) window.history.replaceState({}, document.title, '/login');
       });
   }, []);
@@ -108,8 +116,9 @@ export default function Login() {
 
       if (data.ok && data.user) {
         try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
+        if (data.token) setStoredToken(data.token);
         setCurrentUser(data.user);
-        window.location.assign('/');
+        window.location.replace('/');
       } else {
         setMessage('Resposta de login inválida. Atualize o app e tente novamente.');
         setSubmitting(false);
@@ -128,17 +137,27 @@ export default function Login() {
         <h3 className="login-sub">Sistema de Visitas Técnicas — E/6ª CRE/GIN</h3>
         <p className="login-desc">Acesso restrito a usuários autorizados</p>
 
-        <form onSubmit={handleSubmit} className="login-form">
-          <label htmlFor="email">E-mail</label>
-          <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="thaisopalka@gmail.com" autoComplete="email" required />
+        {magicMode ? (
+          <div className="page-center" style={{ minHeight: 180 }}>
+            <div>
+              <p style={{ fontSize: 44, margin: 0 }}>🔐</p>
+              <strong>ENTRANDO AUTOMATICAMENTE</strong>
+              <p className="login-desc">Seu link mágico está sendo validado. Não é necessário digitar senha.</p>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="login-form">
+            <label htmlFor="email">E-mail</label>
+            <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="thaisopalka@gmail.com" autoComplete="email" required />
 
-          <label htmlFor="password">Senha</label>
-          <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Digite sua senha" autoComplete="current-password" required />
+            <label htmlFor="password">Senha</label>
+            <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Digite sua senha" autoComplete="current-password" required />
 
-          <button className="primary large" type="submit" disabled={submitting}>{submitting ? 'RENOVANDO ACESSO...' : 'ENTRAR NO GINFOTOS'}</button>
-        </form>
+            <button className="primary large" type="submit" disabled={submitting}>{submitting ? 'RENOVANDO ACESSO...' : 'ENTRAR NO GINFOTOS'}</button>
+          </form>
+        )}
 
-        <p className="login-desc" style={{ marginTop: 16 }}>Se você recebeu um link de acesso direto da administradora, abra novamente esse link para renovar sua sessão automaticamente.</p>
+        {!magicMode && <p className="login-desc" style={{ marginTop: 16 }}>Ao abrir um link mágico individual, o GINFOTOS entra automaticamente sem solicitar senha.</p>}
         {message && <p className="notice">{message}</p>}
       </div>
     </div>
