@@ -75,7 +75,11 @@ export function getSessionUser(req) {
   const auth = String(req.headers?.authorization || '');
   const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
   const cookieToken = parseCookies(req)[COOKIE_NAME] || '';
-  return verifySessionToken(bearer || cookieToken);
+
+  // O cookie é atualizado pelo link mágico. Em um navegador compartilhado,
+  // o Bearer salvo no localStorage pode pertencer à pessoa que usou o app antes.
+  // Priorizar o cookie evita que essa sessão antiga substitua o usuário do link.
+  return verifySessionToken(cookieToken || bearer);
 }
 
 export function requireSession(req, res) {
