@@ -62,7 +62,7 @@ function makeDraftClientId() {
   return `local-${Date.now()}-${random}`;
 }
 
-function unidadeStableKey(item: UnidadeApp) {
+function legacyUnidadeKey(item: UnidadeApp) {
   const designation = String(item.designacao || '').trim();
   if (designation) return `d:${designation.toLowerCase()}`;
   const name = String(item.name || '').trim();
@@ -70,8 +70,16 @@ function unidadeStableKey(item: UnidadeApp) {
   return `i:${String(item.id || '').trim().toLowerCase()}`;
 }
 
+function unidadeStableKey(item: UnidadeApp) {
+  // Include the database ID and visible fields so duplicate designations cannot
+  // make the form show one unit while saving another.
+  return [item.id, item.designacao || '', item.name || '']
+    .map((value) => encodeURIComponent(String(value).trim().toLowerCase()))
+    .join('|');
+}
+
 function findUnitByStableKey(items: UnidadeApp[], key: string) {
-  return items.find((item) => unidadeStableKey(item) === key);
+  return items.find((item) => unidadeStableKey(item) === key || legacyUnidadeKey(item) === key);
 }
 
 function loadLocalVisits(): LocalVisitRecord[] {
@@ -212,8 +220,11 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
   const preserveSelection = (items: UnidadeApp[]) => {
     setUnidadeKey((current) => {
-      if (findUnitByStableKey(items, current)) return current;
-      if (current && draftReadyRef.current) return current;
+      const matched = findUnitByStableKey(items, current);
+      if (matched) return unidadeStableKey(matched);
+      // Never keep a stale saved unit key: submitting with a different fallback
+      // would silently attach the visit to the wrong school.
+      if (current && draftReadyRef.current) return '';
       return items[0] ? unidadeStableKey(items[0]) : '';
     });
   };
@@ -331,8 +342,8 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
   }, [unidadeQuery, unidades]);
 
   const selectedUnidade = useMemo(
-    () => findUnitByStableKey(unidades, unidadeKey) || findUnitByStableKey(filteredUnidades, unidadeKey) || filteredUnidades[0] || unidades[0],
-    [unidadeKey, unidades, filteredUnidades]
+    () => findUnitByStableKey(unidades, unidadeKey),
+    [unidadeKey, unidades]
   );
 
   const addFiles = async (files: FileList | null) => {
@@ -522,7 +533,7 @@ export default function NovaVisita({ profile }: NovaVisitaProps) {
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18, marginTop: 22 }}>
           <div className="field"><label htmlFor="busca-unidade">Buscar unidade escolar</label><input id="busca-unidade" value={unidadeQuery} onChange={(event) => setUnidadeQuery(event.target.value)} placeholder="Buscar por designação, unidade, bairro, endereço ou diretor" /></div>
-          <div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeKey} onChange={(event) => { setUnidadeKey(event.target.value); setUnidadeQuery(''); }}>{filteredUnidades.map((item: UnidadeApp) => <option key={unidadeStableKey(item)} value={unidadeStableKey(item)}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>
+          <div className="field"><label htmlFor="unidade">Unidade Escolar</label><select id="unidade" value={unidadeKey} onChange={(event) => { setUnidadeKey(event.currentTarget.value); setUnidadeQuery(''); }}><option value="">Selecione a unidade escolar...</option>{filteredUnidades.map((item: UnidadeApp) => <option key={unidadeStableKey(item)} value={unidadeStableKey(item)}>{item.designacao ? `${item.designacao} - ${item.name}` : item.name}</option>)}</select></div>
           {selectedUnidade && <div className="page-card" style={{ boxShadow: 'none', padding: 18, background: '#f8fafc' }}><strong>UNIDADE SELECIONADA: {selectedUnidade.designacao || 'Designação não informada'} - {selectedUnidade.name}</strong><p className="page-description">Endereço: {selectedUnidade.address || 'Não informado'}</p><p className="page-description">Bairro: {selectedUnidade.bairro || 'Não informado'}</p><p className="page-description">Telefone: {selectedUnidade.telefone || 'Não informado'}</p><p className="page-description">Diretor(a): {selectedUnidade.diretor_geral || 'Não informado'} {selectedUnidade.celular_diretor_geral ? `- ${selectedUnidade.celular_diretor_geral}` : ''}</p><p className="page-description">Origem da base: {selectedUnidade.origem || 'Supabase'}</p></div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}><div className="field"><label htmlFor="visitDate">Data da visita</label><input id="visitDate" type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} required /></div><div className="field"><label htmlFor="tipo">Tipo de visita/obra</label><select id="tipo" value={tipo} onChange={(event) => setTipo(event.target.value)}>{visitTypes.map((item: string) => <option key={item}>{item}</option>)}</select></div></div>
           <div className="field"><label htmlFor="representante">Representante E/6 CRE/GIN</label><input id="representante" value={representante} onChange={(event) => setRepresentante(event.target.value)} required /></div>
