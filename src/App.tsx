@@ -67,7 +67,7 @@ async function renewWithStoredMagicAccess(): Promise<AppUser | null> {
   }
 }
 
-async function validateServerSession(localUser: AppUser) {
+async function validateServerSession(localUser: AppUser | null) {
   try {
     const response = await apiFetch(`/api/login?check=${Date.now()}`, {
       method: 'GET'
@@ -143,8 +143,16 @@ function App() {
     let active = true;
 
     const initialize = async () => {
+      const currentUrl = new URL(window.location.href);
+      const arrivedByMagicLink = currentUrl.searchParams.get('acesso') === 'ok';
+      if (arrivedByMagicLink) {
+        currentUrl.searchParams.delete('acesso');
+        window.history.replaceState({}, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+      }
+
       const currentUser = getCurrentUser();
-      const validatedUser = currentUser ? await validateServerSession(currentUser) : null;
+      const shouldCheckServerSession = Boolean(currentUser || arrivedByMagicLink);
+      const validatedUser = shouldCheckServerSession ? await validateServerSession(currentUser) : null;
       if (!active) return;
       setUser(validatedUser);
       setLoading(false);
