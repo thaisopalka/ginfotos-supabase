@@ -43,6 +43,14 @@ export default function Login() {
     }
 
     const params = new URLSearchParams(window.location.search);
+    const errorCode = params.get('erro');
+    if (errorCode === 'servidor') {
+      setMessage('O GINFOTOS não conseguiu validar o link porque o Supabase está bloqueado por limite de tráfego. O acesso volta a funcionar quando o serviço do projeto for restabelecido.');
+    } else if (errorCode === 'link-invalido' || errorCode === 'token-ausente') {
+      setMessage('Este link não é válido ou já foi substituído. Solicite um novo link individual à administradora.');
+    } else if (errorCode === 'perfil-invalido') {
+      setMessage('Este link não tem um perfil de acesso válido. Solicite que a administradora gere outro.');
+    }
     const queryToken = params.get('acesso')?.trim() || '';
     let storedMagicToken = '';
     try { storedMagicToken = localStorage.getItem(MAGIC_ACCESS_KEY)?.trim() || ''; } catch { /* ignore */ }
