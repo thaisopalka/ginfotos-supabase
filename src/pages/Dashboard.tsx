@@ -50,6 +50,11 @@ interface RecentVisit {
 }
 
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
+const MIN_VISIT_DATE = '2026-10-01';
+
+function isFromOctober(value?: string | null) {
+  return String(value || '').slice(0, 10) >= MIN_VISIT_DATE;
+}
 
 const initialStats: Stats = {
   visitasTotal: 0,
@@ -113,7 +118,7 @@ async function fetchVisits() {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || 'Servidor de visitas não respondeu.');
-  return (Array.isArray(payload.data) ? payload.data : []) as ApiVisit[];
+  return (Array.isArray(payload.data) ? payload.data : []).filter((item: ApiVisit) => isFromOctober(item.visit_date)) as ApiVisit[];
 }
 
 async function fetchUnitCount() {
@@ -137,7 +142,7 @@ export default function Dashboard({ profile }: DashboardProps) {
 
   const loadStats = async () => {
     setLoading(true);
-    const local = loadLocalVisits();
+    const local = loadLocalVisits().filter((item) => isFromOctober(item.visit_date));
     const pending = local.filter((item) => item.id.startsWith('local-'));
 
     try {
