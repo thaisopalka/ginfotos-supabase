@@ -60,6 +60,11 @@ interface ReportVisit extends WordReportVisit {
 
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
 const LOCAL_UNIDADES_KEY = 'ginfotos_unidades_local';
+const MIN_VISIT_DATE = '2026-10-01';
+
+function isFromOctober(value?: string | null) {
+  return String(value || '').slice(0, 10) >= MIN_VISIT_DATE;
+}
 
 function loadLocalVisits(): LocalVisitRecord[] {
   try {
@@ -221,14 +226,14 @@ export default function Relatorios() {
   const loadVisits = async () => {
     setLoading(true);
     setNotice('Carregando visitas sincronizadas do servidor...');
-    const localPending = loadLocalVisits().filter((item) => item.id.startsWith('local-')).map(localToReport);
+    const localPending = loadLocalVisits().filter((item) => item.id.startsWith('local-') && isFromOctober(item.visit_date)).map(localToReport);
 
     void fetchOfficialUnits().then((units) => {
       if (units.length > 0) setOfficialUnits(units);
     });
 
     try {
-      const remoteRows = await fetchVisitList();
+      const remoteRows = (await fetchVisitList()).filter((item) => isFromOctober(item.visit_date));
       const remote = remoteRows.map(apiToReport);
       const remoteIds = new Set(remote.map((item) => item.id));
       const onlyPending = localPending.filter((item) => !remoteIds.has(item.id));
