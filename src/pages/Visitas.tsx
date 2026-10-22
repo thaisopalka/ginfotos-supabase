@@ -68,6 +68,11 @@ interface UnifiedVisit {
 interface VisitasProps { profile: UserProfile | null; }
 
 const LOCAL_VISITS_KEY = 'ginfotos_visitas_local';
+const MIN_VISIT_DATE = '2026-10-01';
+
+function isFromOctober(value?: string | null) {
+  return String(value || '').slice(0, 10) >= MIN_VISIT_DATE;
+}
 const ADMIN_EMAIL = 'thaisopalka@gmail.com';
 
 function loadLocalVisits(): LocalVisitRecord[] {
@@ -313,12 +318,12 @@ export default function Visitas({ profile }: VisitasProps) {
     setLoading(true);
     setMessage('Sincronizando visitas e fotos com todos os usuários...');
 
-    const pendingResult = await synchronizePendingLocals(loadLocalVisits());
+    const pendingResult = await synchronizePendingLocals(loadLocalVisits().filter((item) => isFromOctober(item.visit_date)));
     const localRecords = pendingResult.visits;
     const localVisits = localRecords.map(fromLocal);
 
     try {
-      const remoteRows = await fetchRemoteVisits();
+      const remoteRows = (await fetchRemoteVisits()).filter((item) => isFromOctober(item.visit_date));
       const localById = new Map(localVisits.map((item) => [item.id, item]));
       const remoteVisits = remoteRows.map((row) => {
         const remote = fromApi(row);
