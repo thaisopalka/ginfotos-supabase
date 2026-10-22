@@ -59,22 +59,14 @@ async function saveMagicLink(email, name, role, token) {
           created_by: 'admin'
         }], { onConflict: 'email' });
 
-      const { data: existing, error: readError } = await candidate.client
+      const { error: revokeError } = await candidate.client
         .from('ginfotos_access_links')
-        .select('token,email')
+        .update({ status: 'REVOGADO' })
         .eq('email', email)
-        .maybeSingle();
+        .eq('status', 'ATIVO');
 
-      if (readError) throw readError;
-
-      let linkError = null;
-      if (existing) {
-        const { error } = await candidate.client
-          .from('ginfotos_access_links')
-          .update({ token, name, role, status: 'ATIVO' })
-          .eq('email', email);
-        linkError = error;
-      } else {
+      let linkError = revokeError;
+      if (!linkError) {
         const { error } = await candidate.client
           .from('ginfotos_access_links')
           .insert([{ token, email, name, role, status: 'ATIVO' }]);
