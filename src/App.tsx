@@ -144,6 +144,17 @@ function App() {
 
     const initialize = async () => {
       const currentUrl = new URL(window.location.href);
+      const magicLinkError = currentUrl.pathname === '/login' && currentUrl.searchParams.has('erro');
+      if (magicLinkError) {
+        clearCurrentUser();
+        clearStoredToken();
+        try { localStorage.removeItem(MAGIC_ACCESS_KEY); } catch { /* ignore */ }
+        if (!active) return;
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       const arrivedByMagicLink = currentUrl.searchParams.get('acesso') === 'ok';
       if (arrivedByMagicLink) {
         currentUrl.searchParams.delete('acesso');
