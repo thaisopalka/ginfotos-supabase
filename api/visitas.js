@@ -423,6 +423,7 @@ export default async function handler(req, res) {
       const { data, error } = await supabase
         .from('visitas')
         .select('*')
+        .gte('visit_date', '2026-10-01')
         .order('created_at', { ascending: false, nullsFirst: false })
         .limit(1000);
 
