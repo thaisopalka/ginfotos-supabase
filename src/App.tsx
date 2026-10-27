@@ -196,22 +196,26 @@ function App() {
     if (!user?.email) return;
     let stopped = false;
     let running = false;
+    let lastAttemptAt = 0;
+    const retryIntervalMs = 5 * 60 * 1000;
 
-    const syncNow = async () => {
+    const syncNow = async (force = false) => {
       if (stopped || running || !navigator.onLine) return;
+      const now = Date.now();
+      if (!force && now - lastAttemptAt < retryIntervalMs) return;
+      lastAttemptAt = now;
       running = true;
       try {
         await syncPendingVisitsOnce();
-        if (!stopped) window.dispatchEvent(new Event('ginfotos-visitas-updated'));
       } finally {
         running = false;
       }
     };
 
-    const onOnline = () => { void syncNow(); };
+    const onOnline = () => { void syncNow(true); };
     const onFocus = () => { void syncNow(); };
     const onVisible = () => { if (document.visibilityState === 'visible') void syncNow(); };
-    const intervalId = window.setInterval(() => { void syncNow(); }, 20000);
+    const intervalId = window.setInterval(() => { void syncNow(); }, retryIntervalMs);
 
     window.addEventListener('online', onOnline);
     window.addEventListener('focus', onFocus);
