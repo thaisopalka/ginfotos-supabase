@@ -180,16 +180,18 @@ export default function Dashboard({ profile }: DashboardProps) {
   };
 
   useEffect(() => {
+    let lastRefreshAt = Date.now();
+    const refresh = () => {
+      if (Date.now() - lastRefreshAt < 5000) return;
+      lastRefreshAt = Date.now();
+      void loadStats();
+    };
     void loadStats();
-    const refresh = () => { void loadStats(); };
-    const visible = () => { if (document.visibilityState === 'visible') void loadStats(); };
     window.addEventListener('ginfotos-visitas-updated', refresh);
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', visible);
+    window.addEventListener('storage', refresh);
     return () => {
       window.removeEventListener('ginfotos-visitas-updated', refresh);
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', visible);
+      window.removeEventListener('storage', refresh);
     };
   }, []);
 
