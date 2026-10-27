@@ -350,16 +350,21 @@ export default function Visitas({ profile }: VisitasProps) {
   };
 
   useEffect(() => {
-    loadVisitas();
-    const refresh = () => loadVisitas();
-    const visibilityRefresh = () => { if (document.visibilityState === 'visible') loadVisitas(); };
-    const intervalId = window.setInterval(() => { if (document.visibilityState === 'visible') loadVisitas(); }, 30000);
+    let lastRefreshAt = Date.now();
+    const refresh = () => {
+      if (Date.now() - lastRefreshAt < 5000) return;
+      lastRefreshAt = Date.now();
+      void loadVisitas();
+    };
+    const visibilityRefresh = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    void loadVisitas();
     window.addEventListener('ginfotos-visitas-updated', refresh);
     window.addEventListener('storage', refresh);
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', visibilityRefresh);
     return () => {
-      window.clearInterval(intervalId);
       window.removeEventListener('ginfotos-visitas-updated', refresh);
       window.removeEventListener('storage', refresh);
       window.removeEventListener('focus', refresh);
